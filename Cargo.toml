@@ -1,0 +1,8 @@
+[package]
+name = "read-process-memory"
+version = "0.1.0"
+authors = ["Ted Mielczarek <ted@mielczarek.org>"]
+
+[dependencies]
+libc = "0.2.15"
+log = "0.3.6"
