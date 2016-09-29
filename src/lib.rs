@@ -1,7 +1,6 @@
 #[macro_use] extern crate log;
 extern crate libc;
 
-use libc::c_void;
 use std::io;
 
 pub trait CopyAddress {
@@ -68,6 +67,7 @@ mod platform {
 mod platform {
     extern crate mach;
 
+    use libc::{pid_t, c_int};
     use self::mach::kern_return::{kern_return_t, KERN_SUCCESS};
     use self::mach::port::{mach_port_t, mach_port_name_t, MACH_PORT_NULL};
     use self::mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
@@ -76,7 +76,7 @@ mod platform {
     use std::ptr;
     use std::slice;
 
-    use super::{CopyAddress, Process};
+    use super::{CopyAddress, Process, TryIntoProcessHandle};
 
     #[allow(non_camel_case_types)] type vm_map_t = mach_port_t;
     #[allow(non_camel_case_types)] type vm_address_t = mach_vm_address_t;
@@ -92,7 +92,7 @@ mod platform {
         let mut task: mach_port_name_t = MACH_PORT_NULL;
 
         unsafe {
-            let result = mach::traps::task_for_pid(mach::traps::mach_task_self(), pid as libc::c_int, &mut task);
+            let result = mach::traps::task_for_pid(mach::traps::mach_task_self(), pid as c_int, &mut task);
             if result != KERN_SUCCESS {
                 return Err(io::Error::last_os_error())
             }
@@ -110,18 +110,15 @@ mod platform {
 
     impl CopyAddress for Process {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            let task = task_for_pid(self.handle);
-            if task.is_err() { return task.map(|_| ()) }
-
             let page_addr      = (addr as i64 & (-4096)) as mach_vm_address_t;
-	        let last_page_addr = ((addr as i64 + buf.len() as i64 + 4095) & (-4096)) as mach_vm_address_t;
+	    let last_page_addr = ((addr as i64 + buf.len() as i64 + 4095) & (-4096)) as mach_vm_address_t;
             let page_size      = last_page_addr as usize - page_addr as usize;
 
             let read_ptr: *mut u8 = ptr::null_mut();
             let mut read_len: mach_msg_type_number_t = 0;
 
             let result = unsafe {
-                vm_read(task.unwrap(), page_addr as u64, page_size as vm_size_t, &read_ptr, &mut read_len)
+                vm_read(self.handle, page_addr as u64, page_size as vm_size_t, &read_ptr, &mut read_len)
             };
 
             if result != KERN_SUCCESS {

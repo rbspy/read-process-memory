@@ -6,3 +6,6 @@ authors = ["Ted Mielczarek <ted@mielczarek.org>"]
 [dependencies]
 libc = "0.2.15"
 log = "0.3.6"
+
+[target.'cfg(target_os="macos")'.dependencies]
+mach = "0.0.5"
