@@ -3,7 +3,6 @@ extern crate read_process_memory;
 
 use read_process_memory::*;
 use std::env;
-use libc::pid_t;
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let hex_bytes: Vec<String> = bytes.iter()
@@ -12,7 +11,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    let pid = env::args().nth(1).unwrap().parse::<usize>().unwrap() as pid_t;
+    let pid = env::args().nth(1).unwrap().parse::<usize>().unwrap() as Pid;
     let addr = usize::from_str_radix(&env::args().nth(2).unwrap(), 16).unwrap();
     let size = env::args().nth(3).unwrap().parse::<usize>().unwrap();
     let process = Process::new(pid).unwrap();

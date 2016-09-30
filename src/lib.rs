@@ -24,6 +24,8 @@ pub struct Process {
     handle: platform::ProcessHandle,
 }
 
+pub use platform::Pid;
+
 impl Process {
     pub fn new<T>(process: T) -> io::Result<Process> where T: TryIntoProcessHandle {
         Ok(Process {
@@ -39,6 +41,7 @@ mod platform {
 
     use super::{CopyAddress, Process};
 
+    pub type Pid = pid_t;
     pub type ProcessHandle = pid_t;
 
     impl CopyAddress for Process {
@@ -82,6 +85,7 @@ mod platform {
     #[allow(non_camel_case_types)] type vm_address_t = mach_vm_address_t;
     #[allow(non_camel_case_types)] type vm_size_t = mach_vm_size_t;
 
+    pub type Pid = pid_t;
     pub type ProcessHandle = mach_port_name_t;
 
     extern "C" {
@@ -137,6 +141,53 @@ mod platform {
             buf.copy_from_slice(&read_buf[offset..(offset + len)]);
 
             Ok(())
+        }
+    }
+}
+
+#[cfg(windows)]
+mod platform {
+    extern crate winapi;
+    extern crate kernel32;
+
+    use std::io;
+    use std::mem;
+    use std::os::windows::io::RawHandle;
+    use std::ptr;
+
+    use super::{CopyAddress, Process, TryIntoProcessHandle};
+
+    pub type Pid = winapi::DWORD;
+    pub type ProcessHandle = RawHandle;
+
+    /// `DWORD` can be turned into a `HANDLE` with `OpenProcess`.
+    impl TryIntoProcessHandle for winapi::DWORD {
+        fn try_into_process_handle(self) -> io::Result<ProcessHandle> {
+            let handle = unsafe { kernel32::OpenProcess(winapi::winnt::PROCESS_VM_READ, winapi::FALSE, self) };
+            if handle == (0 as RawHandle) {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(handle)
+            }
+        }
+    }
+
+    impl CopyAddress for Process {
+        fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
+            if buf.len() == 0 {
+                return Ok(());
+            }
+
+            if unsafe { kernel32::ReadProcessMemory(self.handle,
+                                                    addr as winapi::LPVOID,
+                                                    buf.as_mut_ptr() as winapi::LPVOID,
+                                                    mem::size_of_val(buf) as winapi::SIZE_T,
+                                                    ptr::null_mut()) } == winapi::FALSE
+            {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
         }
     }
 }
