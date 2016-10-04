@@ -38,11 +38,18 @@ impl Process {
 mod platform {
     use libc::{pid_t, c_void, iovec, process_vm_readv};
     use std::io;
+    use std::process::Child;
 
-    use super::{CopyAddress, Process};
+    use super::{CopyAddress, Process, TryIntoProcessHandle};
 
     pub type Pid = pid_t;
     pub type ProcessHandle = pid_t;
+
+    impl<'a> TryIntoProcessHandle for &'a Child {
+        fn try_into_process_handle(self) -> io::Result<ProcessHandle> {
+            Ok(self.id() as pid_t)
+        }
+    }
 
     impl CopyAddress for Process {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
@@ -152,7 +159,8 @@ mod platform {
 
     use std::io;
     use std::mem;
-    use std::os::windows::io::RawHandle;
+    use std::os::windows::io::{AsRawHandle, RawHandle};
+    use std::process::Child;
     use std::ptr;
 
     use super::{CopyAddress, Process, TryIntoProcessHandle};
@@ -169,6 +177,12 @@ mod platform {
             } else {
                 Ok(handle)
             }
+        }
+    }
+
+    impl<'a> TryIntoProcessHandle for &'a Child {
+        fn try_into_process_handle(self) -> io::Result<ProcessHandle> {
+            Ok(self.as_raw_handle())
         }
     }
 
@@ -205,4 +219,33 @@ pub fn copy_address_raw<T>(addr: usize, length: usize, source: &T) -> io::Result
             e
         })
         .and(Ok(copy))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::env;
+    use std::io::{self, BufRead, BufReader};
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    fn test_process_path() -> io::Result<PathBuf> {
+        env::current_exe().map(|mut p| { p.set_file_name("test"); p })
+    }
+
+    #[test]
+    fn read_test_process() {
+        let child = Command::new(test_process_path().unwrap())
+            .stdout(Stdio::piped())
+            .spawn().unwrap();
+        let p = Process::new(&child).unwrap();
+        // The test program prints the address and size.
+        let reader = BufReader::new(child.stdout.unwrap());
+        let line = reader.lines().next().unwrap().unwrap();
+        let bits = line.split(' ').collect::<Vec<_>>();
+        let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
+        let size = bits[1].parse::<usize>().unwrap();
+        let mem = copy_address_raw(addr, size, &p).unwrap();
+        assert_eq!(mem, (0..32u8).collect::<Vec<u8>>());
+    }
 }
