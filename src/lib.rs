@@ -221,7 +221,10 @@ pub fn copy_address_raw<T>(addr: usize, length: usize, source: &T) -> io::Result
         .and(Ok(copy))
 }
 
+//TODO: make the tests work on OS X by sending task rights:
+// http://www.foldr.org/~michaelw/log/computers/macosx/task-info-fun-with-mach
 #[cfg(test)]
+#[cfg(not(target_os="macos"))]
 mod test {
     use super::*;
     use std::env;
