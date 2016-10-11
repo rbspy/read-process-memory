@@ -113,6 +113,7 @@ mod platform {
     use self::mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
     use self::mach::message::{mach_msg_type_number_t};
     use std::io;
+    use std::process::Child;
     use std::ptr;
     use std::slice;
 
@@ -179,7 +180,7 @@ mod platform {
             let mut read_len: mach_msg_type_number_t = 0;
 
             let result = unsafe {
-                vm_read(self, page_addr as u64, page_size as vm_size_t, &read_ptr, &mut read_len)
+                vm_read(*self, page_addr as u64, page_size as vm_size_t, &read_ptr, &mut read_len)
             };
 
             if result != KERN_SUCCESS {
