@@ -246,7 +246,7 @@ mod platform {
                 return Ok(());
             }
 
-            if unsafe { kernel32::ReadProcessMemory(self,
+            if unsafe { kernel32::ReadProcessMemory(*self,
                                                     addr as winapi::LPVOID,
                                                     buf.as_mut_ptr() as winapi::LPVOID,
                                                     mem::size_of_val(buf) as winapi::SIZE_T,
