@@ -1,3 +1,4 @@
+// This test program is used in the tests in src/lib.rs.
 use std::thread::sleep;
 use std::time::Duration;
 

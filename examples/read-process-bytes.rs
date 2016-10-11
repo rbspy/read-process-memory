@@ -14,8 +14,8 @@ fn main() {
     let pid = env::args().nth(1).unwrap().parse::<usize>().unwrap() as Pid;
     let addr = usize::from_str_radix(&env::args().nth(2).unwrap(), 16).unwrap();
     let size = env::args().nth(3).unwrap().parse::<usize>().unwrap();
-    let process = Process::new(pid).unwrap();
-    copy_address_raw(addr, size, &process)
+    let handle = pid.try_into_process_handle().unwrap();
+    copy_address(addr, size, &handle)
         .map_err(|e| {
             println!("Error: {:?}", e);
             e
