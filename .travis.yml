@@ -17,10 +17,6 @@ rust:
   # check it compiles on the latest stable compiler
   - stable
 
-before_install:
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install python; fi
-
 # load travis-cargo
 before_script:
   - pip install 'travis-cargo<0.2' --user
