@@ -300,18 +300,27 @@ mod test {
     #[test]
     fn read_test_process() {
         // Spawn a child process and attempt to read its memory.
-        let child = Command::new(test_process_path().unwrap())
+        let path = test_process_path().unwrap();
+        let mut child = Command::new(&path)
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .spawn().unwrap();
+            .spawn()
+            .map_err(|e| {
+                println!("Error spawning test process '{:?}': {:?}", path, e);
+                e
+            })
+            .unwrap();
         let handle = child.try_into_process_handle().unwrap();
         // The test program prints the address and size.
         // See `src/bin/test.rs` for its source.
-        let reader = BufReader::new(child.stdout.unwrap());
+        let reader = BufReader::new(child.stdout.take().unwrap());
         let line = reader.lines().next().unwrap().unwrap();
         let bits = line.split(' ').collect::<Vec<_>>();
         let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
         let size = bits[1].parse::<usize>().unwrap();
         let mem = copy_address(addr, size, &handle).unwrap();
         assert_eq!(mem, (0..32u8).collect::<Vec<u8>>());
+        println!("waiting for child");
+        child.wait().unwrap();
     }
 }
