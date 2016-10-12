@@ -286,15 +286,15 @@ pub fn copy_address<T>(addr: usize, length: usize, source: &T) -> io::Result<Vec
 mod test {
     use super::*;
     use std::env;
-    use std::io::{self, BufRead, BufReader};
+    use std::io::{BufRead, BufReader};
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
 
-    fn test_process_path() -> io::Result<PathBuf> {
-        env::current_exe().map(|p| {
-            p.with_file_name("test")
-                .with_extension(env::consts::EXE_EXTENSION)
-        })
+    fn test_process_path() -> Option<PathBuf> {
+        env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.with_file_name("test")
+                                         .with_extension(env::consts::EXE_EXTENSION)))
     }
 
     #[test]
