@@ -332,4 +332,14 @@ mod test {
         let mem = read_test_process(None).unwrap();
         assert_eq!(mem, (0..32u8).collect::<Vec<u8>>());
     }
+
+    #[test]
+    fn test_read_large() {
+        // 5000 should be greater than a single page on most systems.
+        const SIZE: usize = 5000;
+        let arg = format!("{}", SIZE);
+        let mem = read_test_process(Some(&[&arg])).unwrap();
+        let expected = (0..SIZE).map(|v| (v % (u8::max_value() as usize + 1)) as u8).collect::<Vec<u8>>();
+        assert_eq!(mem, expected);
+    }
 }
