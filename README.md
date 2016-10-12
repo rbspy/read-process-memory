@@ -4,11 +4,14 @@ A crate to read memory from another process. Code originally taken from Julia Ev
 
 # Example
 
-```rust
-use std::io;
-use read_process_memory::*;
+```rust,no_run
+extern crate read_process_memory;
 
-fn foo(pid: Pid, address: usize, size: usize) -> io::Result<()> {
+use std::io;
+use read_process_memory::{Pid, TryIntoProcessHandle, CopyAddress, copy_address};
+
+// Try to read `size` bytes at `address` from the process `pid`.
+fn read_some_memory(pid: Pid, address: usize, size: usize) -> io::Result<()> {
  let handle = try!(pid.try_into_process_handle());
  let _bytes = try!(copy_address(address, size, &handle));
  println!("Read {} bytes", size);
