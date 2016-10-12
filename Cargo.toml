@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Ted Mielczarek <ted@mielczarek.org>"]
 license = "MIT"
 build = "build.rs"
+description = "Read memory from another process."
+homepage = "https://github.com/luser/read-process-memory"
+repository = "https://github.com/luser/read-process-memory"
 
 [dependencies]
 libc = "0.2.15"
