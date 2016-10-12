@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/luser/read-process-memory.svg?branch=master)](https://travis-ci.org/luser/read-process-memory) [![Build status](https://ci.appveyor.com/api/projects/status/9x0yse13l060659f/branch/master?svg=true)](https://ci.appveyor.com/project/luser/read-process-memory/branch/master)
+[![Build Status](https://travis-ci.org/luser/read-process-memory.svg?branch=master)](https://travis-ci.org/luser/read-process-memory) [![Build status](https://ci.appveyor.com/api/projects/status/9x0yse13l060659f/branch/master?svg=true)](https://ci.appveyor.com/project/luser/read-process-memory/branch/master) [![crates.io](https://img.shields.io/crates/v/read-process-memory.svg)](https://crates.io/crates/read-process-memory)
 
 A crate to read memory from another process. Code originally taken from Julia Evans' excellent [ruby-stacktrace](https://github.com/jvns/ruby-stacktrace/) project.
 
