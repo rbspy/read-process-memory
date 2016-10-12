@@ -286,7 +286,7 @@ pub fn copy_address<T>(addr: usize, length: usize, source: &T) -> io::Result<Vec
 mod test {
     use super::*;
     use std::env;
-    use std::io::{BufRead, BufReader};
+    use std::io::{self, BufRead, BufReader};
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
 
@@ -297,20 +297,24 @@ mod test {
                                          .with_extension(env::consts::EXE_EXTENSION)))
     }
 
-    #[test]
-    fn read_test_process() {
+    fn read_test_process(args: Option<&[&str]>) -> io::Result<Vec<u8>> {
         // Spawn a child process and attempt to read its memory.
         let path = test_process_path().unwrap();
-        let mut child = Command::new(&path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                println!("Error spawning test process '{:?}': {:?}", path, e);
-                e
-            })
-            .unwrap();
-        let handle = child.try_into_process_handle().unwrap();
+        let mut cmd = Command::new(&path);
+        {
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped());
+        }
+        if let Some(ref a) = args {
+            cmd.args(a);
+        }
+        let mut child = try!(cmd
+                             .spawn()
+                             .map_err(|e| {
+                                 println!("Error spawning test process '{:?}': {:?}", path, e);
+                                 e
+                             }));
+        let handle = try!(child.try_into_process_handle());
         // The test program prints the address and size.
         // See `src/bin/test.rs` for its source.
         let reader = BufReader::new(child.stdout.take().unwrap());
@@ -318,9 +322,14 @@ mod test {
         let bits = line.split(' ').collect::<Vec<_>>();
         let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
         let size = bits[1].parse::<usize>().unwrap();
-        let mem = copy_address(addr, size, &handle).unwrap();
+        let mem = try!(copy_address(addr, size, &handle));
+        try!(child.wait());
+        Ok(mem)
+    }
+
+    #[test]
+    fn test_read_small() {
+        let mem = read_test_process(None).unwrap();
         assert_eq!(mem, (0..32u8).collect::<Vec<u8>>());
-        println!("waiting for child");
-        child.wait().unwrap();
     }
 }
