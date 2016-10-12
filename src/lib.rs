@@ -291,7 +291,10 @@ mod test {
     use std::process::{Command, Stdio};
 
     fn test_process_path() -> io::Result<PathBuf> {
-        env::current_exe().map(|mut p| { p.set_file_name("test"); p })
+        env::current_exe().map(|p| {
+            p.with_file_name("test")
+                .with_extension(env::consts::EXE_EXTENSION)
+        })
     }
 
     #[test]
