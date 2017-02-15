@@ -305,7 +305,7 @@ mod test {
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::piped());
         }
-        if let Some(ref a) = args {
+        if let Some(a) = args {
             cmd.args(a);
         }
         let mut child = try!(cmd
