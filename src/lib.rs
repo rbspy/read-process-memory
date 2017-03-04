@@ -303,7 +303,7 @@ mod test {
         let mut child = try!(cmd
                              .spawn()
                              .map_err(|e| {
-                                 println!("Error spawning test process '{:?}': {:?}", path, e);
+                                 println!("Error spawning test process '{:?}': {:?}", cmd, e);
                                  e
                              }));
         let handle = try!(child.try_into_process_handle());
