@@ -279,22 +279,42 @@ pub fn copy_address<T>(addr: usize, length: usize, source: &T) -> io::Result<Vec
         .and(Ok(copy))
 }
 
-//TODO: make the tests work on OS X by sending task rights:
-// http://www.foldr.org/~michaelw/log/computers/macosx/task-info-fun-with-mach
 #[cfg(test)]
-#[cfg(not(target_os="macos"))]
 mod test {
+    #[cfg(target_os="macos")]
+    extern crate spawn_task_port;
+
     use super::*;
     use std::env;
     use std::io::{self, BufRead, BufReader};
     use std::path::PathBuf;
-    use std::process::{Command, Stdio};
+    use std::process::{Child, Command, Stdio};
 
     fn test_process_path() -> Option<PathBuf> {
         env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.with_file_name("test")
                                          .with_extension(env::consts::EXE_EXTENSION)))
+    }
+
+    #[cfg(not(target_os="macos"))]
+    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)>
+    {
+        let mut child = try!(cmd
+                             .spawn()
+                             .map_err(|e| {
+                                 println!("Error spawning test process '{:?}': {:?}", path, e);
+                                 e
+                             }));
+        let handle = try!(child.try_into_process_handle());
+        Ok((child, handle))
+    }
+
+    #[cfg(target_os="macos")]
+    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)>
+    {
+        use self::spawn_task_port::CommandSpawnWithTask;
+        cmd.spawn_get_task_port()
     }
 
     fn read_test_process(args: Option<&[&str]>) -> io::Result<Vec<u8>> {
@@ -308,13 +328,7 @@ mod test {
         if let Some(a) = args {
             cmd.args(a);
         }
-        let mut child = try!(cmd
-                             .spawn()
-                             .map_err(|e| {
-                                 println!("Error spawning test process '{:?}': {:?}", path, e);
-                                 e
-                             }));
-        let handle = try!(child.try_into_process_handle());
+        let (mut child, handle) = try!(spawn_with_handle(&mut cmd));
         // The test program prints the address and size.
         // See `src/bin/test.rs` for its source.
         let reader = BufReader::new(child.stdout.take().unwrap());

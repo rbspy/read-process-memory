@@ -24,3 +24,6 @@ skeptic = "0.5"
 
 [dev-dependencies]
 skeptic = "0.5"
+
+[target.'cfg(target_os="macos")'.dev-dependencies]
+spawn-task-port = "0.1"
