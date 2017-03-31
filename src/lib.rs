@@ -22,7 +22,8 @@
 //! # }
 //! ```
 
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate libc;
 
 use std::io;
@@ -91,9 +92,7 @@ mod platform {
                 iov_base: addr as *mut c_void,
                 iov_len: buf.len(),
             };
-            let result = unsafe {
-                process_vm_readv(*self, &local_iov, 1, &remote_iov, 1, 0)
-            };
+            let result = unsafe { process_vm_readv(*self, &local_iov, 1, &remote_iov, 1, 0) };
             if result == -1 {
                 Err(io::Error::last_os_error())
             } else {
@@ -111,7 +110,7 @@ mod platform {
     use self::mach::kern_return::{kern_return_t, KERN_SUCCESS};
     use self::mach::port::{mach_port_t, mach_port_name_t, MACH_PORT_NULL};
     use self::mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
-    use self::mach::message::{mach_msg_type_number_t};
+    use self::mach::message::mach_msg_type_number_t;
     use std::io;
     use std::process::Child;
     use std::ptr;
@@ -119,9 +118,12 @@ mod platform {
 
     use super::{CopyAddress, TryIntoProcessHandle};
 
-    #[allow(non_camel_case_types)] type vm_map_t = mach_port_t;
-    #[allow(non_camel_case_types)] type vm_address_t = mach_vm_address_t;
-    #[allow(non_camel_case_types)] type vm_size_t = mach_vm_size_t;
+    #[allow(non_camel_case_types)]
+    type vm_map_t = mach_port_t;
+    #[allow(non_camel_case_types)]
+    type vm_address_t = mach_vm_address_t;
+    #[allow(non_camel_case_types)]
+    type vm_size_t = mach_vm_size_t;
 
     /// On OS X a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
@@ -129,17 +131,24 @@ mod platform {
     pub type ProcessHandle = mach_port_name_t;
 
     extern "C" {
-        fn vm_read(target_task: vm_map_t, address: vm_address_t, size: vm_size_t, data: &*mut u8, data_size: *mut mach_msg_type_number_t) -> kern_return_t;
+        fn vm_read(target_task: vm_map_t,
+                   address: vm_address_t,
+                   size: vm_size_t,
+                   data: &*mut u8,
+                   data_size: *mut mach_msg_type_number_t)
+                   -> kern_return_t;
     }
 
-    /// A small wrapper around `task_for_pid`, which taskes a pid returns the mach port representing its task.
+    /// A small wrapper around `task_for_pid`, which takes a pid and returns the mach port
+    /// representing its task.
     fn task_for_pid(pid: pid_t) -> io::Result<mach_port_name_t> {
         let mut task: mach_port_name_t = MACH_PORT_NULL;
 
         unsafe {
-            let result = mach::traps::task_for_pid(mach::traps::mach_task_self(), pid as c_int, &mut task);
+            let result =
+                mach::traps::task_for_pid(mach::traps::mach_task_self(), pid as c_int, &mut task);
             if result != KERN_SUCCESS {
-                return Err(io::Error::last_os_error())
+                return Err(io::Error::last_os_error());
             }
         }
 
@@ -172,23 +181,30 @@ mod platform {
     /// Use `vm_read` to read memory from another process on OS X.
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            let page_addr      = (addr as i64 & (-4096)) as mach_vm_address_t;
-	    let last_page_addr = ((addr as i64 + buf.len() as i64 + 4095) & (-4096)) as mach_vm_address_t;
-            let page_size      = last_page_addr as usize - page_addr as usize;
+            let page_addr = (addr as i64 & (-4096)) as mach_vm_address_t;
+            let last_page_addr = ((addr as i64 + buf.len() as i64 + 4095) & (-4096)) as
+                                 mach_vm_address_t;
+            let page_size = last_page_addr as usize - page_addr as usize;
 
             let read_ptr: *mut u8 = ptr::null_mut();
             let mut read_len: mach_msg_type_number_t = 0;
 
             let result = unsafe {
-                vm_read(*self, page_addr as u64, page_size as vm_size_t, &read_ptr, &mut read_len)
+                vm_read(*self,
+                        page_addr as u64,
+                        page_size as vm_size_t,
+                        &read_ptr,
+                        &mut read_len)
             };
 
             if result != KERN_SUCCESS {
-                return Err(io::Error::last_os_error())
+                return Err(io::Error::last_os_error());
             }
 
             if read_len != page_size as u32 {
-                panic!("Mismatched read sizes for `vm_read` (expected {}, got {})", page_size, read_len)
+                panic!("Mismatched read sizes for `vm_read` (expected {}, got {})",
+                       page_size,
+                       read_len)
             }
 
             let read_buf = unsafe { slice::from_raw_parts(read_ptr, read_len as usize) };
@@ -223,7 +239,9 @@ mod platform {
     /// A `Pid` can be turned into a `ProcessHandle` with `OpenProcess`.
     impl TryIntoProcessHandle for winapi::DWORD {
         fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
-            let handle = unsafe { kernel32::OpenProcess(winapi::winnt::PROCESS_VM_READ, winapi::FALSE, *self) };
+            let handle = unsafe {
+                kernel32::OpenProcess(winapi::winnt::PROCESS_VM_READ, winapi::FALSE, *self)
+            };
             if handle == (0 as RawHandle) {
                 Err(io::Error::last_os_error())
             } else {
@@ -246,12 +264,13 @@ mod platform {
                 return Ok(());
             }
 
-            if unsafe { kernel32::ReadProcessMemory(*self,
-                                                    addr as winapi::LPVOID,
-                                                    buf.as_mut_ptr() as winapi::LPVOID,
-                                                    mem::size_of_val(buf) as winapi::SIZE_T,
-                                                    ptr::null_mut()) } == winapi::FALSE
-            {
+            if unsafe {
+                kernel32::ReadProcessMemory(*self,
+                                            addr as winapi::LPVOID,
+                                            buf.as_mut_ptr() as winapi::LPVOID,
+                                            mem::size_of_val(buf) as winapi::SIZE_T,
+                                            ptr::null_mut())
+            } == winapi::FALSE {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(())
@@ -293,26 +312,27 @@ mod test {
     fn test_process_path() -> Option<PathBuf> {
         env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|p| p.with_file_name("test")
-                                         .with_extension(env::consts::EXE_EXTENSION)))
+            .and_then(|p| {
+                p.parent().map(|p| {
+                    p.with_file_name("test")
+                        .with_extension(env::consts::EXE_EXTENSION)
+                })
+            })
     }
 
     #[cfg(not(target_os="macos"))]
-    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)>
-    {
-        let mut child = try!(cmd
-                             .spawn()
-                             .map_err(|e| {
-                                 println!("Error spawning test process '{:?}': {:?}", cmd, e);
-                                 e
-                             }));
+    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
+        let mut child = try!(cmd.spawn()
+            .map_err(|e| {
+                println!("Error spawning test process '{:?}': {:?}", cmd, e);
+                e
+            }));
         let handle = try!(child.try_into_process_handle());
         Ok((child, handle))
     }
 
     #[cfg(target_os="macos")]
-    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)>
-    {
+    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
         use self::spawn_task_port::CommandSpawnWithTask;
         cmd.spawn_get_task_port()
     }
@@ -353,7 +373,8 @@ mod test {
         const SIZE: usize = 5000;
         let arg = format!("{}", SIZE);
         let mem = read_test_process(Some(&[&arg])).unwrap();
-        let expected = (0..SIZE).map(|v| (v % (u8::max_value() as usize + 1)) as u8).collect::<Vec<u8>>();
+        let expected =
+            (0..SIZE).map(|v| (v % (u8::max_value() as usize + 1)) as u8).collect::<Vec<u8>>();
         assert_eq!(mem, expected);
     }
 }

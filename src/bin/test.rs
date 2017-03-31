@@ -11,6 +11,6 @@ fn main() {
     };
     println!("{:p} {}", data.as_ptr(), data.len());
     // Wait to exit until stdin is closed.
-    let mut buf = vec!();
+    let mut buf = vec![];
     io::stdin().read_to_end(&mut buf).unwrap();
 }
