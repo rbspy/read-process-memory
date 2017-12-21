@@ -12,10 +12,14 @@ use read_process_memory::{Pid, TryIntoProcessHandle, CopyAddress, copy_address};
 
 // Try to read `size` bytes at `address` from the process `pid`.
 fn read_some_memory(pid: Pid, address: usize, size: usize) -> io::Result<()> {
- let handle = try!(pid.try_into_process_handle());
- let _bytes = try!(copy_address(address, size, &handle));
- println!("Read {} bytes", size);
- Ok(())
+    let handle = pid.try_into_process_handle()?;
+    let _bytes = copy_address(address, size, &handle)?;
+    println!("Read {} bytes", size);
+    Ok(())
+}
+
+fn main() {
+    read_some_memory(123 as Pid, 0x100000, 100).unwrap();
 }
 ```
 

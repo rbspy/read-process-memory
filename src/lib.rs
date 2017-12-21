@@ -322,7 +322,7 @@ mod test {
 
     #[cfg(not(target_os="macos"))]
     fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
-        let mut child = try!(cmd.spawn()
+        let child = try!(cmd.spawn()
             .map_err(|e| {
                 println!("Error spawning test process '{:?}': {:?}", cmd, e);
                 e
