@@ -44,7 +44,7 @@ after_success:
       if [[ "$TRAVIS_OS_NAME" == "linux" && "$TRAVIS_RUST_VERSION" == "nightly" ]]; then
         travis-cargo coveralls --no-sudo --verify
         # Workaround for https://github.com/huonw/travis-cargo/issues/58
-        ./kcov/build/src/kcov --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo target/kcov target/debug/deps/read_process_memory-*
+        ./kcov/build/src/kcov --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo --include-pattern=$PWD target/kcov target/debug/deps/read_process_memory-*
       fi
 
 env:
