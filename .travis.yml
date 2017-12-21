@@ -51,6 +51,7 @@ after_success:
           ./kcov/build/src/kcov --verify --exclude-pattern=/.cargo --include-pattern=$PWD target/kcov $f
         done
         ./kcov/build/src/kcov --merge --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo --include-pattern=$PWD target/kcov target/kcov
+        set +v +x
       fi
 
 env:
