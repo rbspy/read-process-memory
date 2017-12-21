@@ -11,7 +11,8 @@ addons:
       - libcurl4-openssl-dev
       - libelf-dev
       - libdw-dev
-      - binutils-dev # optional: only required for the --verify flag of coveralls
+      - binutils-dev # required for the --verify flag of coveralls
+      - libiberty-dev # same
 rust:
   - nightly
   - beta
@@ -42,9 +43,14 @@ after_success:
   # cost of some speed <https://github.com/huonw/travis-cargo/issues/12>)
   - |
       if [[ "$TRAVIS_OS_NAME" == "linux" && "$TRAVIS_RUST_VERSION" == "nightly" ]]; then
+        rm -f target/debug/deps/read_process_memory-*
         travis-cargo coveralls --no-sudo --verify
+        set -v -x
         # Workaround for https://github.com/huonw/travis-cargo/issues/58
-        ./kcov/build/src/kcov --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo --include-pattern=$PWD target/kcov target/debug/deps/read_process_memory-*
+        for f in target/debug/deps/read_process_memory-*; do
+          ./kcov/build/src/kcov --verify --exclude-pattern=/.cargo --include-pattern=$PWD target/kcov $f
+        done
+        ./kcov/build/src/kcov --merge --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo --include-pattern=$PWD target/kcov target/kcov
       fi
 
 env:
