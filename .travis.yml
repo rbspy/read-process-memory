@@ -1,4 +1,5 @@
 language: rust
+cache: cargo
 sudo: false
 os:
 - linux
@@ -14,8 +15,11 @@ addons:
 rust:
   - nightly
   - beta
-  # check it compiles on the latest stable compiler
   - stable
+
+before_install:
+- if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
+- if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install python || true; fi
 
 # load travis-cargo
 before_script:
@@ -23,6 +27,7 @@ before_script:
   - if [[ -e ~/Library/Python/2.7/bin ]]; then export PATH=~/Library/Python/2.7/bin:$PATH; fi
   - if [[ -e ~/.local/bin ]]; then export PATH=~/.local/bin:$PATH; fi
   - echo PATH is $PATH
+  - export RUST_BACKTRACE=1
 
 # the main build
 script:
@@ -36,7 +41,7 @@ after_success:
   # argument mitigates kcov crashes due to malformed debuginfo, at the
   # cost of some speed <https://github.com/huonw/travis-cargo/issues/12>)
   - |
-      if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
+      if [[ "$TRAVIS_OS_NAME" == "linux" && "$TRAVIS_RUST_VERSION" == "nightly" ]]; then
         travis-cargo coveralls --no-sudo --verify
         # Workaround for https://github.com/huonw/travis-cargo/issues/58
         ./kcov/build/src/kcov --verify --coveralls-id=$TRAVIS_JOB_ID --exclude-pattern=/.cargo target/kcov target/debug/deps/read_process_memory-*
