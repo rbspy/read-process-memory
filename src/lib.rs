@@ -137,6 +137,12 @@ mod platform {
                    data: &*mut u8,
                    data_size: *mut mach_msg_type_number_t)
                    -> kern_return_t;
+
+        fn vm_deallocate(target_task: vm_map_t,
+                         address: vm_address_t,
+                         size: vm_size_t) -> kern_return_t;
+
+        fn mach_task_self() -> mach_port_t;
     }
 
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the mach port
@@ -213,6 +219,11 @@ mod platform {
             let len = buf.len();
             buf.copy_from_slice(&read_buf[offset..(offset + len)]);
 
+            unsafe {
+                vm_deallocate(mach_task_self(),
+                              read_ptr as vm_address_t,
+                              read_len as vm_size_t);
+            }
             Ok(())
         }
     }
