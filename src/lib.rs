@@ -110,11 +110,8 @@ mod platform {
     use self::mach::kern_return::{kern_return_t, KERN_SUCCESS};
     use self::mach::port::{mach_port_t, mach_port_name_t, MACH_PORT_NULL};
     use self::mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
-    use self::mach::message::mach_msg_type_number_t;
     use std::io;
     use std::process::Child;
-    use std::ptr;
-    use std::slice;
 
     use super::{CopyAddress, TryIntoProcessHandle};
 
@@ -131,18 +128,11 @@ mod platform {
     pub type ProcessHandle = mach_port_name_t;
 
     extern "C" {
-        fn vm_read(target_task: vm_map_t,
-                   address: vm_address_t,
-                   size: vm_size_t,
-                   data: &*mut u8,
-                   data_size: *mut mach_msg_type_number_t)
-                   -> kern_return_t;
-
-        fn vm_deallocate(target_task: vm_map_t,
-                         address: vm_address_t,
-                         size: vm_size_t) -> kern_return_t;
-
-        fn mach_task_self() -> mach_port_t;
+        fn vm_read_overwrite(target_task: vm_map_t,
+                             address: vm_address_t,
+                             size: vm_size_t,
+                             data: vm_address_t,
+                             out_size: *mut vm_size_t) -> kern_return_t;
     }
 
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the mach port
@@ -187,42 +177,24 @@ mod platform {
     /// Use `vm_read` to read memory from another process on OS X.
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            let page_addr = (addr as i64 & (-4096)) as mach_vm_address_t;
-            let last_page_addr = ((addr as i64 + buf.len() as i64 + 4095) & (-4096)) as
-                                 mach_vm_address_t;
-            let page_size = last_page_addr as usize - page_addr as usize;
-
-            let read_ptr: *mut u8 = ptr::null_mut();
-            let mut read_len: mach_msg_type_number_t = 0;
-
+            let mut read_len = buf.len() as vm_size_t;
             let result = unsafe {
-                vm_read(*self,
-                        page_addr as u64,
-                        page_size as vm_size_t,
-                        &read_ptr,
-                        &mut read_len)
+                vm_read_overwrite(*self,
+                                  addr as vm_address_t,
+                                  buf.len() as vm_size_t,
+                                  buf.as_mut_ptr() as vm_address_t,
+                                  &mut read_len)
+
             };
 
-            if result != KERN_SUCCESS {
-                return Err(io::Error::last_os_error());
-            }
-
-            if read_len != page_size as u32 {
+            if read_len != buf.len() as vm_size_t {
                 panic!("Mismatched read sizes for `vm_read` (expected {}, got {})",
-                       page_size,
+                       buf.len(),
                        read_len)
             }
 
-            let read_buf = unsafe { slice::from_raw_parts(read_ptr, read_len as usize) };
-
-            let offset = addr - page_addr as usize;
-            let len = buf.len();
-            buf.copy_from_slice(&read_buf[offset..(offset + len)]);
-
-            unsafe {
-                vm_deallocate(mach_task_self(),
-                              read_ptr as vm_address_t,
-                              read_len as vm_size_t);
+            if result != KERN_SUCCESS {
+                return Err(io::Error::last_os_error());
             }
             Ok(())
         }
