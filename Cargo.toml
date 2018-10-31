@@ -9,7 +9,7 @@ repository = "https://github.com/luser/read-process-memory"
 
 [dependencies]
 libc = "0.2.15"
-log = "0.3.6"
+log = "0.4.6"
 
 [target.'cfg(target_os="macos")'.dependencies]
 mach = "0.0.5"
