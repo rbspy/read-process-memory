@@ -229,6 +229,117 @@ mod platform {
     }
 }
 
+#[cfg(target_os="freebsd")]
+mod platform {
+    use libc::{pid_t, c_void, c_int, waitpid, WIFSTOPPED, PT_ATTACH, PT_DETACH, PT_IO};
+    use std::{io, ptr};
+    use std::process::Child;
+
+    use super::{CopyAddress, TryIntoProcessHandle};
+
+    /// On FreeBSD a `Pid` is just a `libc::pid_t`.
+    pub type Pid = pid_t;
+    /// On FreeBSD a `ProcessHandle` is just a `libc::pid_t`.
+    pub type ProcessHandle = pid_t;
+
+    #[repr(C)]
+    struct PtraceIoDesc {
+        piod_op: c_int,
+        piod_offs: *mut c_void,
+        piod_addr: *mut c_void,
+        piod_len: usize,
+    }
+
+    extern "C" {
+        /// libc version of ptrace takes *mut i8 as third argument,
+        /// which is not very ergonomic if we have a struct.
+        fn ptrace(request: c_int,
+                  pid: pid_t,
+                  io_desc: *const PtraceIoDesc,
+                  data: c_int) -> c_int;
+    }
+
+    /// Following variable is not exposed via libc, yet.
+    /// https://github.com/freebsd/freebsd/blob/1d6e4247415d264485ee94b59fdbc12e0c566fd0/sys/sys/ptrace.h#L112
+    const PIOD_READ: c_int = 1;
+
+    /// A `process::Child` always has a pid, which is all we need on FreeBSD.
+    impl TryIntoProcessHandle for Child {
+        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
+            Ok(self.id() as pid_t)
+        }
+    }
+
+    /// Attach to a process `pid` and wait for the process to be stopped.
+    fn ptrace_attach(pid: ProcessHandle) -> io::Result<()> {
+        let attach_status = unsafe {
+            ptrace(PT_ATTACH, pid, ptr::null_mut(), 0)
+        };
+
+        if attach_status == -1 {
+            return Err(io::Error::last_os_error())
+        }
+
+        let mut wait_status = 0;
+
+        let stopped = unsafe {
+            waitpid(pid, &mut wait_status as *mut _, 0);
+            WIFSTOPPED(wait_status)
+        };
+
+        if !stopped {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Read process `pid` memory at `addr` to `buf` via PT_IO ptrace call.
+    fn ptrace_io(pid: ProcessHandle, addr: usize, buf: &mut [u8])
+                 -> io::Result<()> {
+        let ptrace_io_desc = PtraceIoDesc {
+            piod_op: PIOD_READ,
+            piod_offs: addr as *mut c_void,
+            piod_addr: buf.as_mut_ptr() as *mut c_void,
+            piod_len: buf.len(),
+        };
+
+        let result = unsafe {
+            ptrace(PT_IO, pid, &ptrace_io_desc as *const _, 0)
+        };
+
+        if result == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+
+    /// Detach from the process `pid`.
+    fn ptrace_detach(pid: ProcessHandle) -> io::Result<()> {
+        let detach_status = unsafe {
+            ptrace(PT_DETACH, pid, ptr::null_mut(), 0)
+        };
+
+        if detach_status == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    impl CopyAddress for ProcessHandle {
+        fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
+            ptrace_attach(*self)?;
+
+            ptrace_io(*self, addr, buf)?;
+
+            ptrace_detach(*self)
+        }
+    }
+}
+
 #[cfg(windows)]
 mod platform {
     extern crate winapi;
