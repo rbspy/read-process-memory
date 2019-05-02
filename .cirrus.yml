@@ -1,7 +1,6 @@
-freebsd_instance:
-  image: freebsd-12-0-release-amd64
-
 freebsd_task:
+  freebsd_instance:
+    image: freebsd-12-0-release-amd64
   name: $TOOLCHAIN x86_64-unknown-freebsd
   env:
     matrix:
@@ -13,6 +12,23 @@ freebsd_task:
     - curl https://sh.rustup.rs -sSf --output rustup.sh
     - sh rustup.sh -y --default-toolchain $TOOLCHAIN
   build_script:
-    - $HOME/.cargo/bin/rustup run $TOOLCHAIN cargo build
+    - $HOME/.cargo/bin/rustup run $TOOLCHAIN cargo build --verbose
   test_script:
-    - $HOME/.cargo/bin/rustup run $TOOLCHAIN cargo test
+    - $HOME/.cargo/bin/rustup run $TOOLCHAIN cargo test --verbose
+
+macos_task:
+  osx_instance:
+    image: mojave-xcode-10.2
+  name: $TOOLCHAIN x86_64-apple-darwin
+  env:
+    matrix:
+      - TOOLCHAIN: stable
+      - TOOLCHAIN: beta
+      - TOOLCHAIN: nightly
+  setup_script:
+    - curl https://sh.rustup.rs -sSf --output rustup.sh
+    - sh rustup.sh -y --default-toolchain $TOOLCHAIN
+  build_script:
+    - $HOME/.cargo/bin/rustup run $TOOLCHAIN cargo build --verbose
+  test_script:
+    - $HOME/.cargo/bin/rustup run $TOOLCHAIN cargo test --verbose
