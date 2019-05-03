@@ -2,6 +2,7 @@ extern crate libc;
 extern crate read_process_memory;
 
 use read_process_memory::*;
+use std::convert::TryInto;
 use std::env;
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -15,7 +16,7 @@ fn main() {
     let pid = env::args().nth(1).unwrap().parse::<usize>().unwrap() as Pid;
     let addr = usize::from_str_radix(&env::args().nth(2).unwrap(), 16).unwrap();
     let size = env::args().nth(3).unwrap().parse::<usize>().unwrap();
-    let handle = pid.try_into_process_handle().unwrap();
+    let handle: ProcessHandle = pid.try_into().unwrap();
     copy_address(addr, size, &handle)
         .map_err(|e| {
             println!("Error: {:?}", e);
