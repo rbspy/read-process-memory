@@ -364,13 +364,11 @@ mod platform {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
             let should_detach = ptrace_attach(self.0)? == PtraceLockState::Release;
 
-            ptrace_io(self.0, addr, buf)?;
-
+            let result = ptrace_io(self.0, addr, buf);
             if should_detach {
-                ptrace_detach(self.0)
-            } else {
-                Ok(())
+                ptrace_detach(self.0)?
             }
+           result
         }
     }
 }
