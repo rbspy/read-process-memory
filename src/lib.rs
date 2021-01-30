@@ -65,6 +65,9 @@ mod platform {
     use libc::{pid_t, c_void, iovec, process_vm_readv};
     use std::convert::TryFrom;
     use std::io;
+    use std::fs;
+    use std::io::Seek;
+    use std::io::Read;
     use std::process::Child;
 
     use super::{CopyAddress};
@@ -105,7 +108,15 @@ mod platform {
             };
             let result = unsafe { process_vm_readv(self.0, &local_iov, 1, &remote_iov, 1, 0) };
             if result == -1 {
-                Err(io::Error::last_os_error())
+                if let Some(libc::ENOSYS) = io::Error::last_os_error().raw_os_error() {
+                    // fallback to reading /proc/$pid/mem if kernel does not
+                    // implement process_vm_readv()
+                    let mut procmem = fs::File::open(format!("/proc/{}/mem", self.0))?;
+                    procmem.seek(io::SeekFrom::Start(addr as u64))?;
+                    return procmem.read_exact(buf);
+                } else {
+                    Err(io::Error::last_os_error())
+                }
             } else {
                 Ok(())
             }
