@@ -495,10 +495,8 @@ mod test {
 
     #[cfg(target_os="macos")]
     fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
-        use self::spawn_task_port::CommandSpawnWithTask;
-        let (child, mach_port_name) = cmd.spawn_get_task_port()?;
-
-        let handle = ProcessHandle::try_from(mach_port_name)?;
+        let child = cmd.spawn()?;
+        let handle = ProcessHandle::try_from(child.id() as Pid)?;
         Ok((child, handle))
     }
 

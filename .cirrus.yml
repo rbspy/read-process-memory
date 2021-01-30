@@ -1,13 +1,11 @@
 freebsd_instance:
-  image: freebsd-12-0-release-amd64
+  image_family: freebsd-12-1
 
 freebsd_task:
   name: $TOOLCHAIN x86_64-unknown-freebsd
   env:
     matrix:
       - TOOLCHAIN: stable
-      - TOOLCHAIN: beta
-      - TOOLCHAIN: nightly
   setup_script:
     - pkg install -y curl
     - curl https://sh.rustup.rs -sSf --output rustup.sh

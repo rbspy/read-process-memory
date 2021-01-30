@@ -1,0 +1,29 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose --examples
+    - name: Run tests
+      run: cargo test --verbose
+      if: runner.os != 'macOS'
+    - name: Run tests (macos)
+      run: sudo "PATH=$PATH" cargo test --verbose
+      if: runner.os == 'macOS'
+
+
