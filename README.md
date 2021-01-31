@@ -4,7 +4,7 @@ A crate to read memory from another process. Code originally taken from Julia Ev
 
 # Example
 
-```rust ignore
+```rust, no_run
 extern crate read_process_memory;
 
 use std::convert::TryInto;

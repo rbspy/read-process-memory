@@ -133,7 +133,6 @@ mod platform {
     use self::mach::port::{mach_port_t, mach_port_name_t, MACH_PORT_NULL};
     use self::mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
 
-    use self::mach::message::mach_msg_type_number_t;
     use std::convert::TryFrom;
     use std::io;
     use std::process::Child;
@@ -472,9 +471,6 @@ pub fn copy_address<T>(addr: usize, length: usize, source: &T) -> io::Result<Vec
 
 #[cfg(test)]
 mod test {
-    #[cfg(target_os="macos")]
-    extern crate spawn_task_port;
-
     use super::*;
     use std::convert::TryFrom;
     use std::env;
@@ -493,18 +489,6 @@ mod test {
             })
     }
 
-    #[cfg(not(target_os="macos"))]
-    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
-        let child = try!(cmd.spawn()
-            .map_err(|e| {
-                println!("Error spawning test process '{:?}': {:?}", cmd, e);
-                e
-            }));
-        let handle = ProcessHandle::try_from(&child)?;
-        Ok((child, handle))
-    }
-
-    #[cfg(target_os="macos")]
     fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
         let child = cmd.spawn()?;
         let handle = ProcessHandle::try_from(child.id() as Pid)?;
@@ -522,7 +506,7 @@ mod test {
         if let Some(a) = args {
             cmd.args(a);
         }
-        let (mut child, handle) = try!(spawn_with_handle(&mut cmd));
+        let (mut child, handle) = spawn_with_handle(&mut cmd)?;
         // The test program prints the address and size.
         // See `src/bin/test.rs` for its source.
         let reader = BufReader::new(child.stdout.take().unwrap());
@@ -530,8 +514,8 @@ mod test {
         let bits = line.split(' ').collect::<Vec<_>>();
         let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
         let size = bits[1].parse::<usize>().unwrap();
-        let mem = try!(copy_address(addr, size, &handle));
-        try!(child.wait());
+        let mem = copy_address(addr, size, &handle)?;
+        child.wait()?;
         Ok(mem)
     }
 

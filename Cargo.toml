@@ -18,5 +18,5 @@ mach = "0.0.5"
 winapi = "0.2"
 kernel32-sys = "0.2"
 
-[target.'cfg(target_os="macos")'.dev-dependencies]
-spawn-task-port = "0.1"
+[dev-dependencies]
+docmatic = "0.1"
