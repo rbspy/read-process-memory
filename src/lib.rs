@@ -12,12 +12,13 @@
 //! # Examples
 //!
 //! ```rust,no_run
+//! # use std::convert::TryInto;
 //! # use std::io;
 //! use read_process_memory::*;
 //!
 //! # fn foo(pid: Pid, address: usize, size: usize) -> io::Result<()> {
-//! let handle = try!(pid.try_into_process_handle());
-//! let bytes = try!(copy_address(address, size, &handle));
+//! let handle: ProcessHandle = pid.try_into()?;
+//! let bytes = copy_address(address, size, &handle)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -37,48 +38,61 @@ pub trait CopyAddress {
 /// A process ID.
 pub use platform::Pid;
 /// A handle to a running process. This is not a process ID on all platforms.
-pub use platform::ProcessHandle;
-
-/// Attempt to get a process handle for a running process.
+///
+/// For convenience, this crate implements `TryFrom`-backed conversions from
+/// `Pid` to `ProcessHandle`.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use std::convert::TryInto;
+/// use std::io;
+/// use read_process_memory::*;
+///
+/// fn pid_to_handle(pid: Pid) -> io::Result<ProcessHandle> {
+///   Ok(pid.try_into()?)
+/// }
+/// ```
 ///
 /// This operation is not guaranteed to succeed. Specifically, on Windows
 /// `OpenProcess` may fail, and on OS X `task_for_pid` will generally fail
 /// unless run as root, and even then it may fail when called on certain
 /// programs.
-///
-/// This should be dropped in favor of TryInto when that stabilizes:
-/// https://github.com/rust-lang/rust/issues/33417
-pub trait TryIntoProcessHandle {
-    /// Attempt to get a `ProcessHandle` from `self`.
-    fn try_into_process_handle(&self) -> io::Result<ProcessHandle>;
-}
-
-/// Trivial implementation of `TryIntoProcessHandle`.
-///
-/// A `ProcessHandle` is always usable.
-impl TryIntoProcessHandle for ProcessHandle {
-    fn try_into_process_handle(&self) -> io::Result<platform::ProcessHandle> {
-        Ok(*self)
-    }
-}
+pub use platform::ProcessHandle;
 
 #[cfg(target_os="linux")]
 mod platform {
     use libc::{pid_t, c_void, iovec, process_vm_readv};
+    use std::convert::TryFrom;
     use std::io;
+    use std::fs;
+    use std::io::Seek;
+    use std::io::Read;
     use std::process::Child;
 
-    use super::{CopyAddress, TryIntoProcessHandle};
+    use super::{CopyAddress};
 
     /// On Linux a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
     /// On Linux a `ProcessHandle` is just a `libc::pid_t`.
-    pub type ProcessHandle = pid_t;
+    #[derive(Copy, Clone)]
+    pub struct ProcessHandle(Pid);
+
+    /// On Linux, process handle is a pid.
+    impl TryFrom<Pid> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(pid: Pid) -> io::Result<Self> {
+            Ok(Self(pid))
+        }
+    }
 
     /// A `process::Child` always has a pid, which is all we need on Linux.
-    impl TryIntoProcessHandle for Child {
-        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
-            Ok(self.id() as pid_t)
+    impl TryFrom<&Child> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(child: &Child) -> io::Result<Self> {
+            Self::try_from(child.id() as Pid)
         }
     }
 
@@ -92,9 +106,17 @@ mod platform {
                 iov_base: addr as *mut c_void,
                 iov_len: buf.len(),
             };
-            let result = unsafe { process_vm_readv(*self, &local_iov, 1, &remote_iov, 1, 0) };
+            let result = unsafe { process_vm_readv(self.0, &local_iov, 1, &remote_iov, 1, 0) };
             if result == -1 {
-                Err(io::Error::last_os_error())
+                if let Some(libc::ENOSYS) = io::Error::last_os_error().raw_os_error() {
+                    // fallback to reading /proc/$pid/mem if kernel does not
+                    // implement process_vm_readv()
+                    let mut procmem = fs::File::open(format!("/proc/{}/mem", self.0))?;
+                    procmem.seek(io::SeekFrom::Start(addr as u64))?;
+                    return procmem.read_exact(buf);
+                } else {
+                    Err(io::Error::last_os_error())
+                }
             } else {
                 Ok(())
             }
@@ -110,13 +132,12 @@ mod platform {
     use self::mach::kern_return::{kern_return_t, KERN_SUCCESS};
     use self::mach::port::{mach_port_t, mach_port_name_t, MACH_PORT_NULL};
     use self::mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
-    use self::mach::message::mach_msg_type_number_t;
+
+    use std::convert::TryFrom;
     use std::io;
     use std::process::Child;
-    use std::ptr;
-    use std::slice;
 
-    use super::{CopyAddress, TryIntoProcessHandle};
+    use super::{CopyAddress};
 
     #[allow(non_camel_case_types)]
     type vm_map_t = mach_port_t;
@@ -128,26 +149,20 @@ mod platform {
     /// On OS X a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
     /// On OS X a `ProcessHandle` is a mach port.
-    pub type ProcessHandle = mach_port_name_t;
+    #[derive(Copy, Clone)]
+    pub struct ProcessHandle(mach_port_name_t);
 
     extern "C" {
-        fn vm_read(target_task: vm_map_t,
-                   address: vm_address_t,
-                   size: vm_size_t,
-                   data: &*mut u8,
-                   data_size: *mut mach_msg_type_number_t)
-                   -> kern_return_t;
-
-        fn vm_deallocate(target_task: vm_map_t,
-                         address: vm_address_t,
-                         size: vm_size_t) -> kern_return_t;
-
-        fn mach_task_self() -> mach_port_t;
+        fn vm_read_overwrite(target_task: vm_map_t,
+                             address: vm_address_t,
+                             size: vm_size_t,
+                             data: vm_address_t,
+                             out_size: *mut vm_size_t) -> kern_return_t;
     }
 
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the mach port
     /// representing its task.
-    fn task_for_pid(pid: pid_t) -> io::Result<mach_port_name_t> {
+    fn task_for_pid(pid: Pid) -> io::Result<mach_port_name_t> {
         let mut task: mach_port_name_t = MACH_PORT_NULL;
 
         unsafe {
@@ -161,68 +176,62 @@ mod platform {
         Ok(task)
     }
 
-    /// `Pid` can be turned into a `ProcessHandle` with `task_for_pid`.
-    impl TryIntoProcessHandle for Pid {
-        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
-            task_for_pid(*self)
+    /// A `Pid` can be turned into a `ProcessHandle` with `task_for_pid`.
+    impl TryFrom<Pid> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(pid: Pid) -> io::Result<Self> {
+            Ok(Self(task_for_pid(pid)?))
         }
     }
 
-    /// This `TryIntoProcessHandle` impl simply calls the `TryIntoProcessHandle` impl for `Pid`.
+    /// On Darwin, process handle is a mach port name.
+    impl TryFrom<mach_port_name_t> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(mach_port_name: mach_port_name_t) -> io::Result<Self> {
+            Ok(Self(mach_port_name))
+        }
+    }
+
+    /// This `TryFrom` impl simply calls the `TryFrom` impl for `Pid`.
     ///
     /// Unfortunately spawning a process on OS X does not hand back a mach
     /// port by default (you have to jump through several hoops to get at it),
-    /// so there's no simple implementation of `TryIntoProcessHandle` for
-    /// `std::process::Child`. This implementation is just provided for symmetry
+    /// so there's no simple implementation of `TryFrom` Child
+    /// `for::Child`. This implementation is just provided for symmetry
     /// with other platforms to make writing cross-platform code easier.
     ///
     /// Ideally we would provide an implementation of `std::process::Command::spawn`
     /// that jumped through those hoops and provided the task port.
-    impl TryIntoProcessHandle for Child {
-        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
-            self.id().try_into_process_handle()
+    impl TryFrom<&Child> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(child: &Child) -> io::Result<Self> {
+            Self::try_from(child.id() as Pid)
         }
     }
 
     /// Use `vm_read` to read memory from another process on OS X.
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            let page_addr = (addr as i64 & (-4096)) as mach_vm_address_t;
-            let last_page_addr = ((addr as i64 + buf.len() as i64 + 4095) & (-4096)) as
-                                 mach_vm_address_t;
-            let page_size = last_page_addr as usize - page_addr as usize;
-
-            let read_ptr: *mut u8 = ptr::null_mut();
-            let mut read_len: mach_msg_type_number_t = 0;
-
+            let mut read_len = buf.len() as vm_size_t;
             let result = unsafe {
-                vm_read(*self,
-                        page_addr as u64,
-                        page_size as vm_size_t,
-                        &read_ptr,
-                        &mut read_len)
+                vm_read_overwrite(self.0,
+                                  addr as vm_address_t,
+                                  buf.len() as vm_size_t,
+                                  buf.as_mut_ptr() as vm_address_t,
+                                  &mut read_len)
             };
 
-            if result != KERN_SUCCESS {
-                return Err(io::Error::last_os_error());
-            }
-
-            if read_len != page_size as u32 {
+            if read_len != buf.len() as vm_size_t {
                 panic!("Mismatched read sizes for `vm_read` (expected {}, got {})",
-                       page_size,
+                       buf.len(),
                        read_len)
             }
 
-            let read_buf = unsafe { slice::from_raw_parts(read_ptr, read_len as usize) };
-
-            let offset = addr - page_addr as usize;
-            let len = buf.len();
-            buf.copy_from_slice(&read_buf[offset..(offset + len)]);
-
-            unsafe {
-                vm_deallocate(mach_task_self(),
-                              read_ptr as vm_address_t,
-                              read_len as vm_size_t);
+            if result != KERN_SUCCESS {
+                return Err(io::Error::last_os_error());
             }
             Ok(())
         }
@@ -231,16 +240,19 @@ mod platform {
 
 #[cfg(target_os="freebsd")]
 mod platform {
-    use libc::{pid_t, c_void, c_int, waitpid, WIFSTOPPED, PT_ATTACH, PT_DETACH, PT_IO};
+    use libc::{pid_t, c_void, c_int};
+    use libc::{waitpid, WIFSTOPPED, PT_ATTACH, PT_DETACH, PT_IO, EBUSY};
+    use std::convert::TryFrom;
     use std::{io, ptr};
     use std::process::Child;
 
-    use super::{CopyAddress, TryIntoProcessHandle};
+    use super::{CopyAddress};
 
     /// On FreeBSD a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
     /// On FreeBSD a `ProcessHandle` is just a `libc::pid_t`.
-    pub type ProcessHandle = pid_t;
+    #[derive(Copy, Clone)]
+    pub struct ProcessHandle(Pid);
 
     #[repr(C)]
     struct PtraceIoDesc {
@@ -248,6 +260,17 @@ mod platform {
         piod_offs: *mut c_void,
         piod_addr: *mut c_void,
         piod_len: usize,
+    }
+
+    /// If process is already traced, PT_ATTACH call returns
+    /// EBUSY. This structure is needed to avoid double locking the process.
+    /// - `Release` variant means we can safely detach from the process.
+    /// - `NoRelease` variant means that process was already attached, so we
+    ///    shall not attempt to detach from it.
+    #[derive(PartialEq)]
+    enum PtraceLockState {
+        Release,
+        NoRelease,
     }
 
     extern "C" {
@@ -263,21 +286,39 @@ mod platform {
     /// https://github.com/freebsd/freebsd/blob/1d6e4247415d264485ee94b59fdbc12e0c566fd0/sys/sys/ptrace.h#L112
     const PIOD_READ: c_int = 1;
 
+    /// On FreeBSD, process handle is a pid.
+    impl TryFrom<Pid> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(pid: Pid) -> io::Result<Self> {
+            Ok(Self(pid))
+        }
+    }
+
     /// A `process::Child` always has a pid, which is all we need on FreeBSD.
-    impl TryIntoProcessHandle for Child {
-        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
-            Ok(self.id() as pid_t)
+    impl TryFrom<&Child> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(child: &Child) -> io::Result<Self> {
+            Self::try_from(child.id() as Pid)
         }
     }
 
     /// Attach to a process `pid` and wait for the process to be stopped.
-    fn ptrace_attach(pid: ProcessHandle) -> io::Result<()> {
+    fn ptrace_attach(pid: Pid) -> io::Result<PtraceLockState> {
         let attach_status = unsafe {
             ptrace(PT_ATTACH, pid, ptr::null_mut(), 0)
         };
 
-        if attach_status == -1 {
-            return Err(io::Error::last_os_error())
+        let last_error = io::Error::last_os_error();
+
+        if let Some(error) = last_error.raw_os_error() {
+            if attach_status == -1 {
+                return match error {
+                    EBUSY => Ok(PtraceLockState::NoRelease),
+                    _ => Err(last_error),
+                }
+            }
         }
 
         let mut wait_status = 0;
@@ -290,12 +331,12 @@ mod platform {
         if !stopped {
             Err(io::Error::last_os_error())
         } else {
-            Ok(())
+            Ok(PtraceLockState::Release)
         }
     }
 
     /// Read process `pid` memory at `addr` to `buf` via PT_IO ptrace call.
-    fn ptrace_io(pid: ProcessHandle, addr: usize, buf: &mut [u8])
+    fn ptrace_io(pid: Pid, addr: usize, buf: &mut [u8])
                  -> io::Result<()> {
         let ptrace_io_desc = PtraceIoDesc {
             piod_op: PIOD_READ,
@@ -317,7 +358,7 @@ mod platform {
 
 
     /// Detach from the process `pid`.
-    fn ptrace_detach(pid: ProcessHandle) -> io::Result<()> {
+    fn ptrace_detach(pid: Pid) -> io::Result<()> {
         let detach_status = unsafe {
             ptrace(PT_DETACH, pid, ptr::null_mut(), 0)
         };
@@ -331,11 +372,13 @@ mod platform {
 
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            ptrace_attach(*self)?;
+            let should_detach = ptrace_attach(self.0)? == PtraceLockState::Release;
 
-            ptrace_io(*self, addr, buf)?;
-
-            ptrace_detach(*self)
+            let result = ptrace_io(self.0, addr, buf);
+            if should_detach {
+                ptrace_detach(self.0)?
+            }
+           result
         }
     }
 }
@@ -345,37 +388,43 @@ mod platform {
     extern crate winapi;
     extern crate kernel32;
 
+    use std::convert::TryFrom;
     use std::io;
     use std::mem;
     use std::os::windows::io::{AsRawHandle, RawHandle};
     use std::process::Child;
     use std::ptr;
 
-    use super::{CopyAddress, TryIntoProcessHandle};
+    use super::{CopyAddress};
 
     /// On Windows a `Pid` is a `DWORD`.
     pub type Pid = winapi::DWORD;
     /// On Windows a `ProcessHandle` is a `HANDLE`.
-    pub type ProcessHandle = RawHandle;
+    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct ProcessHandle(pub RawHandle);
 
     /// A `Pid` can be turned into a `ProcessHandle` with `OpenProcess`.
-    impl TryIntoProcessHandle for winapi::DWORD {
-        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
+    impl TryFrom<Pid> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(pid: Pid) -> io::Result<Self> {
             let handle = unsafe {
-                kernel32::OpenProcess(winapi::winnt::PROCESS_VM_READ, winapi::FALSE, *self)
+                kernel32::OpenProcess(winapi::winnt::PROCESS_VM_READ, winapi::FALSE, pid)
             };
             if handle == (0 as RawHandle) {
                 Err(io::Error::last_os_error())
             } else {
-                Ok(handle)
+                Ok(Self(handle))
             }
         }
     }
 
     /// A `std::process::Child` has a `HANDLE` from calling `CreateProcess`.
-    impl TryIntoProcessHandle for Child {
-        fn try_into_process_handle(&self) -> io::Result<ProcessHandle> {
-            Ok(self.as_raw_handle())
+    impl TryFrom<&Child> for ProcessHandle {
+        type Error = io::Error;
+
+        fn try_from(child: &Child) -> io::Result<Self> {
+            Ok(Self(child.as_raw_handle()))
         }
     }
 
@@ -387,7 +436,7 @@ mod platform {
             }
 
             if unsafe {
-                kernel32::ReadProcessMemory(*self,
+                kernel32::ReadProcessMemory(self.0,
                                             addr as winapi::LPVOID,
                                             buf.as_mut_ptr() as winapi::LPVOID,
                                             mem::size_of_val(buf) as winapi::SIZE_T,
@@ -422,10 +471,8 @@ pub fn copy_address<T>(addr: usize, length: usize, source: &T) -> io::Result<Vec
 
 #[cfg(test)]
 mod test {
-    #[cfg(target_os="macos")]
-    extern crate spawn_task_port;
-
     use super::*;
+    use std::convert::TryFrom;
     use std::env;
     use std::io::{self, BufRead, BufReader};
     use std::path::PathBuf;
@@ -442,21 +489,10 @@ mod test {
             })
     }
 
-    #[cfg(not(target_os="macos"))]
     fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
-        let child = try!(cmd.spawn()
-            .map_err(|e| {
-                println!("Error spawning test process '{:?}': {:?}", cmd, e);
-                e
-            }));
-        let handle = try!(child.try_into_process_handle());
+        let child = cmd.spawn()?;
+        let handle = ProcessHandle::try_from(child.id() as Pid)?;
         Ok((child, handle))
-    }
-
-    #[cfg(target_os="macos")]
-    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
-        use self::spawn_task_port::CommandSpawnWithTask;
-        cmd.spawn_get_task_port()
     }
 
     fn read_test_process(args: Option<&[&str]>) -> io::Result<Vec<u8>> {
@@ -470,7 +506,7 @@ mod test {
         if let Some(a) = args {
             cmd.args(a);
         }
-        let (mut child, handle) = try!(spawn_with_handle(&mut cmd));
+        let (mut child, handle) = spawn_with_handle(&mut cmd)?;
         // The test program prints the address and size.
         // See `src/bin/test.rs` for its source.
         let reader = BufReader::new(child.stdout.take().unwrap());
@@ -478,8 +514,8 @@ mod test {
         let bits = line.split(' ').collect::<Vec<_>>();
         let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
         let size = bits[1].parse::<usize>().unwrap();
-        let mem = try!(copy_address(addr, size, &handle));
-        try!(child.wait());
+        let mem = copy_address(addr, size, &handle)?;
+        child.wait()?;
         Ok(mem)
     }
 
