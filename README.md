@@ -1,6 +1,6 @@
 [![Build](https://github.com/rbspy/read-process-memory/actions/workflows/build.yml/badge.svg)](https://github.com/rbspy/read-process-memory/actions/workflows/build.yml) [![Build status](https://api.cirrus-ci.com/github/rbspy/read-process-memory.svg)] [![crates.io](https://img.shields.io/crates/v/read-process-memory.svg)](https://crates.io/crates/read-process-memory) [![](https://docs.rs/read-process-memory/badge.svg)](https://docs.rs/read-process-memory) [![Coverage Status](https://coveralls.io/repos/github/rbspy/read-process-memory/badge.svg?branch=master)](https://coveralls.io/github/rbspy/read-process-memory?branch=master)
 
-A crate to read memory from another process. Code originally taken from Julia Evans' excellent [ruby-stacktrace](https://github.com/jvns/ruby-stacktrace/) project.
+A crate to read memory from another process. Code originally taken from Julia Evans' excellent [rbspy](https://github.com/rbspy/rbspy/) project.
 
 # Example
 
