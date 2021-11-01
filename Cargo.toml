@@ -1,6 +1,6 @@
 [package]
 name = "read-process-memory"
-version = "0.1.3"
+version = "0.1.4-pre"
 authors = ["Ted Mielczarek <ted@mielczarek.org>"]
 license = "MIT"
 description = "Read memory from another process."
