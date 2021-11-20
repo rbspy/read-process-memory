@@ -241,7 +241,7 @@ mod platform {
 #[cfg(target_os="freebsd")]
 mod platform {
     use libc::{pid_t, c_void, c_int};
-    use libc::{waitpid, WIFSTOPPED, PT_ATTACH, PT_DETACH, PT_IO, EBUSY};
+    use libc::{waitpid, WIFSTOPPED, PIOD_READ_D, PT_ATTACH, PT_DETACH, PT_IO, EBUSY};
     use std::convert::TryFrom;
     use std::{io, ptr};
     use std::process::Child;
@@ -281,10 +281,6 @@ mod platform {
                   io_desc: *const PtraceIoDesc,
                   data: c_int) -> c_int;
     }
-
-    /// Following variable is not exposed via libc, yet.
-    /// https://github.com/freebsd/freebsd/blob/1d6e4247415d264485ee94b59fdbc12e0c566fd0/sys/sys/ptrace.h#L112
-    const PIOD_READ: c_int = 1;
 
     /// On FreeBSD, process handle is a pid.
     impl TryFrom<Pid> for ProcessHandle {
@@ -339,7 +335,7 @@ mod platform {
     fn ptrace_io(pid: Pid, addr: usize, buf: &mut [u8])
                  -> io::Result<()> {
         let ptrace_io_desc = PtraceIoDesc {
-            piod_op: PIOD_READ,
+            piod_op: PIOD_READ_D,
             piod_offs: addr as *mut c_void,
             piod_addr: buf.as_mut_ptr() as *mut c_void,
             piod_len: buf.len(),
