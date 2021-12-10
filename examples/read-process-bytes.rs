@@ -6,9 +6,7 @@ use std::convert::TryInto;
 use std::env;
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
-    let hex_bytes: Vec<String> = bytes.iter()
-        .map(|b| format!("{:02x}", b))
-        .collect();
+    let hex_bytes: Vec<String> = bytes.iter().map(|b| format!("{:02x}", b)).collect();
     hex_bytes.join("")
 }
 
@@ -23,12 +21,14 @@ fn main() {
             e
         })
         .map(|bytes| {
-            println!("{} bytes at address {:x}:
+            println!(
+                "{} bytes at address {:x}:
 {}
 ",
-                     size,
-                     addr,
-                     bytes_to_hex(&bytes))
+                size,
+                addr,
+                bytes_to_hex(&bytes)
+            )
         })
         .unwrap();
 }
