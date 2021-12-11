@@ -76,7 +76,7 @@ mod platform {
     /// On Linux a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
     /// On Linux a `ProcessHandle` is just a `libc::pid_t`.
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     pub struct ProcessHandle(Pid);
 
     /// On Linux, process handle is a pid.
@@ -148,7 +148,7 @@ mod platform {
     /// On OS X a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
     /// On OS X a `ProcessHandle` is a mach port.
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     pub struct ProcessHandle(mach_port_name_t);
 
     extern "C" {
@@ -382,6 +382,7 @@ mod platform {
     use std::os::windows::io::{AsRawHandle, RawHandle};
     use std::process::Child;
     use std::ptr;
+    use std::sync::Arc;
     use winapi::{
         shared::{basetsd, minwindef},
         um::{handleapi, memoryapi, processthreadsapi, winnt},
@@ -391,11 +392,13 @@ mod platform {
 
     /// On Windows a `Pid` is a `DWORD`.
     pub type Pid = minwindef::DWORD;
+    #[derive(Eq, PartialEq, Hash)]
+    struct ProcessHandleInner(RawHandle);
     /// On Windows a `ProcessHandle` is a `HANDLE`.
-    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-    pub struct ProcessHandle(pub RawHandle);
+    #[derive(Clone, Eq, PartialEq, Hash)]
+    pub struct ProcessHandle(Arc<ProcessHandleInner>);
 
-    impl Drop for ProcessHandle {
+    impl Drop for ProcessHandleInner {
         fn drop(&mut self) {
             unsafe { handleapi::CloseHandle(self.0) };
         }
@@ -410,7 +413,7 @@ mod platform {
             if handle == (0 as RawHandle) {
                 Err(io::Error::last_os_error())
             } else {
-                Ok(Self(handle))
+                Ok(Self(Arc::new(ProcessHandleInner(handle))))
             }
         }
     }
@@ -420,7 +423,7 @@ mod platform {
         type Error = io::Error;
 
         fn try_from(child: &Child) -> io::Result<Self> {
-            Ok(Self(child.as_raw_handle()))
+            Ok(Self(Arc::new(ProcessHandleInner(child.as_raw_handle()))))
         }
     }
 
@@ -433,7 +436,7 @@ mod platform {
 
             if unsafe {
                 memoryapi::ReadProcessMemory(
-                    self.0,
+                    self.0 .0,
                     addr as minwindef::LPVOID,
                     buf.as_mut_ptr() as minwindef::LPVOID,
                     mem::size_of_val(buf) as basetsd::SIZE_T,
