@@ -379,6 +379,7 @@ mod platform {
     use std::convert::TryFrom;
     use std::io;
     use std::mem;
+    use std::ops::Deref;
     use std::os::windows::io::{AsRawHandle, RawHandle};
     use std::process::Child;
     use std::ptr;
@@ -397,6 +398,14 @@ mod platform {
     /// On Windows a `ProcessHandle` is a `HANDLE`.
     #[derive(Clone, Eq, PartialEq, Hash)]
     pub struct ProcessHandle(Arc<ProcessHandleInner>);
+
+    impl Deref for ProcessHandle {
+        type Target = RawHandle;
+    
+        fn deref(&self) -> &Self::Target {
+            &self.0.0
+        }
+    }
 
     impl Drop for ProcessHandleInner {
         fn drop(&mut self) {
