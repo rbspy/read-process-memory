@@ -257,7 +257,7 @@ mod platform {
     /// On FreeBSD a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
     /// On FreeBSD a `ProcessHandle` is just a `libc::pid_t`.
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     pub struct ProcessHandle(Pid);
 
     #[repr(C)]
