@@ -1,22 +1,28 @@
 [package]
 name = "read-process-memory"
-version = "0.1.4-pre"
+edition = "2021"
+version = "0.2.0-pre"
 authors = ["Ted Mielczarek <ted@mielczarek.org>"]
 license = "MIT"
 description = "Read memory from another process."
 homepage = "https://github.com/rbspy/read-process-memory"
 repository = "https://github.com/rbspy/read-process-memory"
+rust-version = "1.56"
 
 [dependencies]
-libc = "0.2.15"
-log = "0.4.6"
+libc = "0.2"
+log = "0.4"
 
 [target.'cfg(target_os="macos")'.dependencies]
-mach = "0.0.5"
+mach = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
-winapi = "0.2"
-kernel32-sys = "0.2"
-
-[dev-dependencies]
-docmatic = "0.1"
+winapi = { version = "0.3", features = [
+  "std",
+  "basetsd",
+  "minwindef",
+  "handleapi",
+  "memoryapi",
+  "processthreadsapi",
+  "winnt",
+] }

@@ -7,8 +7,6 @@ A crate to read memory from another process. Code originally taken from the [rbs
 This example re-executes itself as a child process in order to have a separate process to use for demonstration purposes. If you need to read memory from a process that you are spawning, your usage should look very similar to this:
 
 ```rust
-extern crate read_process_memory;
-
 use std::convert::TryInto;
 use std::env;
 use std::io::{self, BufReader, BufRead, Read, Result};
