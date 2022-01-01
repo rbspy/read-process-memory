@@ -436,6 +436,12 @@ mod platform {
         }
     }
 
+    impl From<RawHandle> for ProcessHandle {
+        fn from(handle: RawHandle) -> Self {
+            return Self(Arc::new(ProcessHandleInner(handle)));
+        }
+    }
+
     /// Use `ReadProcessMemory` to read memory from another process on Windows.
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
