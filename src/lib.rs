@@ -6,7 +6,7 @@
 //!
 //! Note: you may not always have permission to read memory from another
 //! process! This may require `sudo` on some systems, and may fail even with
-//! `sudo` on OS X. You are most likely to succeed if you are attempting to
+//! `sudo` on macOS. You are most likely to succeed if you are attempting to
 //! read a process that you have spawned yourself.
 //!
 //! # Examples
@@ -56,7 +56,7 @@ pub use crate::platform::Pid;
 /// ```
 ///
 /// This operation is not guaranteed to succeed. Specifically, on Windows
-/// `OpenProcess` may fail, and on OS X `task_for_pid` will generally fail
+/// `OpenProcess` may fail, and on macOS `task_for_pid` will generally fail
 /// unless run as root, and even then it may fail when called on certain
 /// programs.
 pub use crate::platform::ProcessHandle;
@@ -145,9 +145,9 @@ mod platform {
     #[allow(non_camel_case_types)]
     type vm_size_t = mach_vm_size_t;
 
-    /// On OS X a `Pid` is just a `libc::pid_t`.
+    /// On macOS a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
-    /// On OS X a `ProcessHandle` is a mach port.
+    /// On macOS a `ProcessHandle` is a mach port.
     #[derive(Clone)]
     pub struct ProcessHandle(mach_port_name_t);
 
@@ -197,7 +197,7 @@ mod platform {
 
     /// This `TryFrom` impl simply calls the `TryFrom` impl for `Pid`.
     ///
-    /// Unfortunately spawning a process on OS X does not hand back a mach
+    /// Unfortunately spawning a process on macOS does not hand back a mach
     /// port by default (you have to jump through several hoops to get at it),
     /// so there's no simple implementation of `TryFrom` Child
     /// `for::Child`. This implementation is just provided for symmetry
@@ -214,7 +214,7 @@ mod platform {
         }
     }
 
-    /// Use `vm_read` to read memory from another process on OS X.
+    /// Use `vm_read` to read memory from another process on macOS.
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
             let mut read_len = buf.len() as vm_size_t;
