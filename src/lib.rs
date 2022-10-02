@@ -109,7 +109,7 @@ mod platform {
             };
             let result = unsafe { process_vm_readv(self.0, &local_iov, 1, &remote_iov, 1, 0) };
             if result == -1 {
-                if let Some(libc::ENOSYS) = io::Error::last_os_error().raw_os_error() {
+                if let Some(libc::EPERM) = io::Error::last_os_error().raw_os_error() {
                     // fallback to reading /proc/$pid/mem if kernel does not
                     // implement process_vm_readv()
                     let mut procmem = fs::File::open(format!("/proc/{}/mem", self.0))?;
