@@ -56,9 +56,9 @@ pub use crate::platform::Pid;
 /// ```
 ///
 /// This operation is not guaranteed to succeed. Specifically, on Windows
-/// `OpenProcess` may fail, and on macOS `task_for_pid` will generally fail
+/// `OpenProcess` may fail. On macOS `task_for_pid` will generally fail
 /// unless run as root, and even then it may fail when called on certain
-/// programs.
+/// programs; it may however run without root on the current process.
 pub use crate::platform::ProcessHandle;
 
 #[cfg(target_os = "linux")]
@@ -165,8 +165,8 @@ mod platform {
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the
     /// mach port representing its task.
     fn task_for_pid(pid: Pid) -> io::Result<mach_port_name_t> {
-        if pid == libc::getpid() as Pid {
-            return Ok(mach::traps::mach_task_self());
+        if pid == unsafe { libc::getpid() } as Pid {
+            return Ok(unsafe { mach::traps::mach_task_self() });
         }
 
         let mut task: mach_port_name_t = MACH_PORT_NULL;
