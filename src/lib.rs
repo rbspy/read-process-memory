@@ -234,11 +234,14 @@ mod platform {
             };
 
             if read_len != buf.len() as vm_size_t {
-                panic!(
-                    "Mismatched read sizes for `vm_read` (expected {}, got {})",
-                    buf.len(),
-                    read_len
-                )
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Mismatched read sizes for `vm_read` (expected {}, got {})",
+                        buf.len(),
+                        read_len
+                    ),
+                ));
             }
 
             if result != KERN_SUCCESS {
