@@ -544,8 +544,9 @@ mod test {
 
     #[test]
     fn test_read_large() {
-        // 5000 should be greater than a single page on most systems.
-        const SIZE: usize = 5000;
+        // 20,000 should be greater than a single page on most systems.
+        // macOS on ARM is 16384.
+        const SIZE: usize = 20_000;
         let arg = format!("{}", SIZE);
         let mem = read_test_process(Some(&[&arg])).unwrap();
         let expected = (0..SIZE)
