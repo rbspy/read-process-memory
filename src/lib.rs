@@ -165,6 +165,10 @@ mod platform {
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the
     /// mach port representing its task.
     fn task_for_pid(pid: Pid) -> io::Result<mach_port_name_t> {
+        if pid == libc::getpid() as Pid {
+            return Ok(mach::traps::mach_task_self());
+        }
+
         let mut task: mach_port_name_t = MACH_PORT_NULL;
 
         unsafe {
