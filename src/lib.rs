@@ -406,9 +406,9 @@ mod platform {
 
     impl Deref for ProcessHandle {
         type Target = RawHandle;
-    
+
         fn deref(&self) -> &Self::Target {
-            &self.0.0
+            &self.0 .0
         }
     }
 
