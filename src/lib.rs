@@ -56,9 +56,9 @@ pub use crate::platform::Pid;
 /// ```
 ///
 /// This operation is not guaranteed to succeed. Specifically, on Windows
-/// `OpenProcess` may fail, and on macOS `task_for_pid` will generally fail
+/// `OpenProcess` may fail. On macOS `task_for_pid` will generally fail
 /// unless run as root, and even then it may fail when called on certain
-/// programs.
+/// programs; it may however run without root on the current process.
 pub use crate::platform::ProcessHandle;
 
 #[cfg(target_os = "linux")]
@@ -165,6 +165,10 @@ mod platform {
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the
     /// mach port representing its task.
     fn task_for_pid(pid: Pid) -> io::Result<mach_port_name_t> {
+        if pid == unsafe { libc::getpid() } as Pid {
+            return Ok(unsafe { mach::traps::mach_task_self() });
+        }
+
         let mut task: mach_port_name_t = MACH_PORT_NULL;
 
         unsafe {
@@ -230,11 +234,14 @@ mod platform {
             };
 
             if read_len != buf.len() as vm_size_t {
-                panic!(
-                    "Mismatched read sizes for `vm_read` (expected {}, got {})",
-                    buf.len(),
-                    read_len
-                )
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Mismatched read sizes for `vm_read` (expected {}, got {})",
+                        buf.len(),
+                        read_len
+                    ),
+                ));
             }
 
             if result != KERN_SUCCESS {
@@ -402,9 +409,9 @@ mod platform {
 
     impl Deref for ProcessHandle {
         type Target = RawHandle;
-    
+
         fn deref(&self) -> &Self::Target {
-            &self.0.0
+            &self.0 .0
         }
     }
 
@@ -544,8 +551,9 @@ mod test {
 
     #[test]
     fn test_read_large() {
-        // 5000 should be greater than a single page on most systems.
-        const SIZE: usize = 5000;
+        // 20,000 should be greater than a single page on most systems.
+        // macOS on ARM is 16384.
+        const SIZE: usize = 20_000;
         let arg = format!("{}", SIZE);
         let mem = read_test_process(Some(&[&arg])).unwrap();
         let expected = (0..SIZE)
