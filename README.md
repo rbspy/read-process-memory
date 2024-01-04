@@ -67,3 +67,72 @@ fn in_child() -> Result<()> {
 }
 
 ```
+
+# How it works
+
+Here's a summary, with some C pseudocode, of how the `read-process-memory`
+crate works under the hood on each of the platforms it supports. The three
+inputs are:
+
+* `PID`: the process ID to read from
+* `LENGTH`: how much memory to read
+* `ADDRESS`: the address to read from
+
+## Linux:
+
+Uses [process_vm_readv](https://man7.org/linux/man-pages/man2/process_vm_readv.2.html)
+
+```
+void* TARGET = (void*) 0x123412341324;
+struct iovec local;
+local.iov_base = calloc(LENGTH, sizeof(char));
+local.iov_len = LENGTH;
+struct iovec remote;
+remote[0].iov_base = TARGET;
+remote[0].iov_len = LENGTH;
+process_vm_readv(PID, local, 2, remote, 1, 0);
+```
+
+## Mac OS:
+
+Uses [vm_read_overwrite](https://developer.apple.com/documentation/kernel/1585371-vm_read_overwrite)
+
+```
+mach_port_name_t task;
+task_for_pid(mach_task_self(), PID, &task)
+vm_size_t read_len = LENGTH;
+char result[LENGTH];
+vm_read_overwrite(task, TARGET, LENGTH, &result, &read_len)
+```
+
+## FreeBSD:
+
+Uses [ptrace](https://man.freebsd.org/cgi/man.cgi?query=ptrace). This one stops the process to read from it.
+
+```
+// attach
+int wait_status = 0;
+attach_status = ptrace(PT_ATTACH, PID, null, 0);
+waitpid(PID, &wait_status, 0);
+WIFSTOPPED(wait_status)
+char result[LENGTH];
+desc = PtraceIoDesc {
+  piod_op: PIOD_READ_D,
+  piod_offs: TARGET;
+  piod_addr: &result;
+  piod_len: LENGTH,
+};
+// read data
+ptrace(PT_IO, PID, &desc, 0);
+// detach
+ptrace(PT_DETACH, PID, null, 0);
+```
+
+## Windows:
+
+Uses [ReadProcessMemory](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-readprocessmemory):
+
+```
+char result[LENGTH];
+ReadProcessMemory(PID, ADDRESS, &result, LENGTH, null);
+```
