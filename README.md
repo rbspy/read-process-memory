@@ -82,7 +82,7 @@ inputs are:
 
 Uses [process_vm_readv](https://man7.org/linux/man-pages/man2/process_vm_readv.2.html)
 
-```
+```c
 void* TARGET = (void*) 0x123412341324;
 struct iovec local;
 local.iov_base = calloc(LENGTH, sizeof(char));
@@ -97,7 +97,7 @@ process_vm_readv(PID, local, 2, remote, 1, 0);
 
 Uses [vm_read_overwrite](https://developer.apple.com/documentation/kernel/1585371-vm_read_overwrite)
 
-```
+```c
 mach_port_name_t task;
 task_for_pid(mach_task_self(), PID, &task)
 vm_size_t read_len = LENGTH;
@@ -109,7 +109,7 @@ vm_read_overwrite(task, TARGET, LENGTH, &result, &read_len)
 
 Uses [ptrace](https://man.freebsd.org/cgi/man.cgi?query=ptrace). This one stops the process to read from it.
 
-```
+```c
 // attach
 int wait_status = 0;
 attach_status = ptrace(PT_ATTACH, PID, null, 0);
@@ -132,7 +132,7 @@ ptrace(PT_DETACH, PID, null, 0);
 
 Uses [ReadProcessMemory](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-readprocessmemory):
 
-```
+```c
 char result[LENGTH];
 ReadProcessMemory(PID, ADDRESS, &result, LENGTH, null);
 ```
