@@ -13,7 +13,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-2022, macos-13, macos-14]
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose --all-targets
     - name: Run tests
