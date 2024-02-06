@@ -387,37 +387,28 @@ mod platform {
     use std::convert::TryFrom;
     use std::io;
     use std::mem;
-    use std::ops::Deref;
+    use std::os::raw::c_void;
     use std::os::windows::io::{AsRawHandle, RawHandle};
     use std::process::Child;
     use std::ptr;
     use std::sync::Arc;
-    use winapi::{
-        shared::{basetsd, minwindef},
-        um::{handleapi, memoryapi, processthreadsapi, winnt},
-    };
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ};
 
     use super::CopyAddress;
 
     /// On Windows a `Pid` is a `DWORD`.
-    pub type Pid = minwindef::DWORD;
+    pub type Pid = u32;
     #[derive(Eq, PartialEq, Hash)]
-    struct ProcessHandleInner(RawHandle);
+    struct ProcessHandleInner(HANDLE);
     /// On Windows a `ProcessHandle` is a `HANDLE`.
     #[derive(Clone, Eq, PartialEq, Hash)]
     pub struct ProcessHandle(Arc<ProcessHandleInner>);
 
-    impl Deref for ProcessHandle {
-        type Target = RawHandle;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0 .0
-        }
-    }
-
     impl Drop for ProcessHandleInner {
         fn drop(&mut self) {
-            unsafe { handleapi::CloseHandle(self.0) };
+            unsafe { CloseHandle(self.0) };
         }
     }
 
@@ -426,8 +417,8 @@ mod platform {
         type Error = io::Error;
 
         fn try_from(pid: Pid) -> io::Result<Self> {
-            let handle = unsafe { processthreadsapi::OpenProcess(winnt::PROCESS_VM_READ, 0, pid) };
-            if handle == (0 as RawHandle) {
+            let handle = unsafe { OpenProcess(PROCESS_VM_READ, 0, pid) };
+            if handle == 0 {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(Self(Arc::new(ProcessHandleInner(handle))))
@@ -440,29 +431,31 @@ mod platform {
         type Error = io::Error;
 
         fn try_from(child: &Child) -> io::Result<Self> {
-            Ok(Self(Arc::new(ProcessHandleInner(child.as_raw_handle()))))
+            Ok(Self(Arc::new(ProcessHandleInner(
+                child.as_raw_handle() as HANDLE
+            ))))
         }
     }
 
     impl From<RawHandle> for ProcessHandle {
         fn from(handle: RawHandle) -> Self {
-            return Self(Arc::new(ProcessHandleInner(handle)));
+            Self(Arc::new(ProcessHandleInner(handle as HANDLE)))
         }
     }
 
     /// Use `ReadProcessMemory` to read memory from another process on Windows.
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            if buf.len() == 0 {
+            if buf.is_empty() {
                 return Ok(());
             }
 
             if unsafe {
-                memoryapi::ReadProcessMemory(
+                ReadProcessMemory(
                     self.0 .0,
-                    addr as minwindef::LPVOID,
-                    buf.as_mut_ptr() as minwindef::LPVOID,
-                    mem::size_of_val(buf) as basetsd::SIZE_T,
+                    addr as *const c_void,
+                    buf.as_mut_ptr().cast(),
+                    mem::size_of_val(buf),
                     ptr::null_mut(),
                 )
             } == 0
@@ -504,6 +497,11 @@ mod test {
     use std::io::{self, BufRead, BufReader};
     use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
+
+    #[allow(unused)]
+    const fn assert_send_sync<T: Send + Sync>() {}
+    const _: () = assert_send_sync::<ProcessHandle>();
+    const _: () = assert_send_sync::<Pid>();
 
     fn test_process_path() -> Option<PathBuf> {
         env::current_exe().ok().and_then(|p| {

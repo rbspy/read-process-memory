@@ -17,12 +17,8 @@ log = "0.4"
 mach = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = [
-  "std",
-  "basetsd",
-  "minwindef",
-  "handleapi",
-  "memoryapi",
-  "processthreadsapi",
-  "winnt",
+windows-sys = { version = "0.52.0", features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Threading",
 ] }
