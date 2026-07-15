@@ -129,9 +129,9 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use libc::{c_int, pid_t};
-    use mach::kern_return::{kern_return_t, KERN_SUCCESS};
-    use mach::port::{mach_port_name_t, mach_port_t, MACH_PORT_NULL};
-    use mach::vm_types::{mach_vm_address_t, mach_vm_size_t};
+    use mach2::kern_return::{kern_return_t, KERN_SUCCESS};
+    use mach2::port::{mach_port_name_t, mach_port_t, MACH_PORT_NULL};
+    use mach2::vm_types::{mach_vm_address_t, mach_vm_size_t};
 
     use std::convert::TryFrom;
     use std::io;
@@ -166,14 +166,14 @@ mod platform {
     /// mach port representing its task.
     fn task_for_pid(pid: Pid) -> io::Result<mach_port_name_t> {
         if pid == unsafe { libc::getpid() } as Pid {
-            return Ok(unsafe { mach::traps::mach_task_self() });
+            return Ok(unsafe { mach2::traps::mach_task_self() });
         }
 
         let mut task: mach_port_name_t = MACH_PORT_NULL;
 
         unsafe {
             let result =
-                mach::traps::task_for_pid(mach::traps::mach_task_self(), pid as c_int, &mut task);
+                mach2::traps::task_for_pid(mach2::traps::mach_task_self(), pid as c_int, &mut task);
             if result != KERN_SUCCESS {
                 return Err(io::Error::last_os_error());
             }
@@ -427,7 +427,7 @@ mod platform {
 
         fn try_from(pid: Pid) -> io::Result<Self> {
             let handle = unsafe { OpenProcess(PROCESS_VM_READ, 0, pid) };
-            if handle == 0 {
+            if handle.is_null() {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(Self(Arc::new(ProcessHandleInner(handle))))
