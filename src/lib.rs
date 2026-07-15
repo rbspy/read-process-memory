@@ -403,6 +403,12 @@ mod platform {
     pub type Pid = u32;
     #[derive(Eq, PartialEq, Hash)]
     struct ProcessHandleInner(HANDLE);
+
+    // A HANDLE is an index into the process-wide kernel handle table rather than
+    // an address, so it stays valid on any thread
+    unsafe impl Send for ProcessHandleInner {}
+    unsafe impl Sync for ProcessHandleInner {}
+
     /// On Windows a `ProcessHandle` is a `HANDLE`.
     #[derive(Clone, Eq, PartialEq, Hash)]
     pub struct ProcessHandle(Arc<ProcessHandleInner>);
