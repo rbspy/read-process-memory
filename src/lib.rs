@@ -527,14 +527,21 @@ mod test {
         })
     }
 
-    fn spawn_with_handle(cmd: &mut Command) -> io::Result<(Child, ProcessHandle)> {
-        let child = cmd.spawn()?;
-        let handle = ProcessHandle::try_from(child.id() as Pid)?;
-        Ok((child, handle))
+    fn read_test_process(args: Option<&[&str]>) -> io::Result<Vec<u8>> {
+        read_test_process_with(args, |child| ProcessHandle::try_from(child.id() as Pid))
     }
 
-    fn read_test_process(args: Option<&[&str]>) -> io::Result<Vec<u8>> {
-        // Spawn a child process and attempt to read its memory.
+    /// Spawn the test child, build a handle to it via `make_handle`, and read
+    /// the block of memory it advertises on stdout.
+    ///
+    /// The handle is dropped before `child.wait()` so that both the wrapper's
+    /// `CloseHandle` (on Windows) and the `Child`'s own run against a live
+    /// process: if the two ever closed the same handle, the `wait()` here would
+    /// fail. This is what exercises the `TryFrom<&Child>` ownership contract.
+    fn read_test_process_with<F>(args: Option<&[&str]>, make_handle: F) -> io::Result<Vec<u8>>
+    where
+        F: FnOnce(&Child) -> io::Result<ProcessHandle>,
+    {
         let path = test_process_path().unwrap();
         let mut cmd = Command::new(&path);
         {
@@ -543,7 +550,8 @@ mod test {
         if let Some(a) = args {
             cmd.args(a);
         }
-        let (mut child, handle) = spawn_with_handle(&mut cmd)?;
+        let mut child = cmd.spawn()?;
+        let handle = make_handle(&child)?;
         // The test program prints the address and size.
         // See `src/bin/test.rs` for its source.
         let reader = BufReader::new(child.stdout.take().unwrap());
@@ -552,6 +560,7 @@ mod test {
         let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
         let size = bits[1].parse::<usize>().unwrap();
         let mem = copy_address(addr, size, &handle)?;
+        drop(handle);
         child.wait()?;
         Ok(mem)
     }
@@ -573,5 +582,11 @@ mod test {
             .map(|v| (v % (u8::max_value() as usize + 1)) as u8)
             .collect::<Vec<u8>>();
         assert_eq!(mem, expected);
+    }
+
+    #[test]
+    fn test_read_from_child_handle() {
+        let mem = read_test_process_with(None, |child| ProcessHandle::try_from(child)).unwrap();
+        assert_eq!(mem, (0..32u8).collect::<Vec<u8>>());
     }
 }
