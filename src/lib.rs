@@ -389,7 +389,7 @@ mod platform {
     use std::mem;
     use std::ops::Deref;
     use std::os::raw::c_void;
-    use std::os::windows::io::{AsRawHandle, RawHandle};
+    use std::os::windows::io::RawHandle;
     use std::process::Child;
     use std::ptr;
     use std::sync::Arc;
@@ -441,17 +441,22 @@ mod platform {
         }
     }
 
-    /// A `std::process::Child` has a `HANDLE` from calling `CreateProcess`.
+    /// A `std::process::Child` can be turned into a `ProcessHandle` with
+    /// `OpenProcess`. The `Child` keeps ownership of its own handle.
     impl TryFrom<&Child> for ProcessHandle {
         type Error = io::Error;
 
         fn try_from(child: &Child) -> io::Result<Self> {
-            Ok(Self(Arc::new(ProcessHandleInner(
-                child.as_raw_handle() as HANDLE
-            ))))
+            Self::try_from(child.id() as Pid)
         }
     }
 
+    /// Wrap an existing `RawHandle` in a `ProcessHandle`.
+    ///
+    /// This **takes ownership** of `handle`. The resulting `ProcessHandle`
+    /// closes it with `CloseHandle` once the last clone is dropped. Pass an
+    /// owned handle (e.g. from `OpenProcess`), not a borrowed one such as
+    /// `Child::as_raw_handle`.
     impl From<RawHandle> for ProcessHandle {
         fn from(handle: RawHandle) -> Self {
             Self(Arc::new(ProcessHandleInner(handle as HANDLE)))
