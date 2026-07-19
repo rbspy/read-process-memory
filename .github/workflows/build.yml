@@ -35,7 +35,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch
 
       - name: Cache cross binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cross
           key: cross-51f46f296253d8122c927c5bb933e3c4f27cc317
