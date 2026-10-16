@@ -119,6 +119,8 @@ mod platform {
                     }
                     _ => Err(io::Error::last_os_error()),
                 }
+            } else if result as usize != buf.len() {
+                Err(io::Error::new(io::ErrorKind::UnexpectedEof, "partial read"))
             } else {
                 Ok(())
             }
@@ -290,7 +292,7 @@ mod platform {
     extern "C" {
         /// libc version of ptrace takes *mut i8 as third argument,
         /// which is not very ergonomic if we have a struct.
-        fn ptrace(request: c_int, pid: pid_t, io_desc: *const PtraceIoDesc, data: c_int) -> c_int;
+        fn ptrace(request: c_int, pid: pid_t, io_desc: *mut PtraceIoDesc, data: c_int) -> c_int;
     }
 
     /// On FreeBSD, process handle is a pid.
@@ -342,17 +344,19 @@ mod platform {
 
     /// Read process `pid` memory at `addr` to `buf` via PT_IO ptrace call.
     fn ptrace_io(pid: Pid, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-        let ptrace_io_desc = PtraceIoDesc {
+        let mut ptrace_io_desc = PtraceIoDesc {
             piod_op: PIOD_READ_D,
             piod_offs: addr as *mut c_void,
             piod_addr: buf.as_mut_ptr() as *mut c_void,
             piod_len: buf.len(),
         };
 
-        let result = unsafe { ptrace(PT_IO, pid, &ptrace_io_desc as *const _, 0) };
+        let result = unsafe { ptrace(PT_IO, pid, &mut ptrace_io_desc as *mut _, 0) };
 
         if result == -1 {
             Err(io::Error::last_os_error())
+        } else if ptrace_io_desc.piod_len != buf.len() {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "partial read"))
         } else {
             Ok(())
         }
@@ -587,6 +591,34 @@ mod test {
             .map(|v| (v % (u8::max_value() as usize + 1)) as u8)
             .collect::<Vec<u8>>();
         assert_eq!(mem, expected);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_read_fails_on_short_read() {
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let mem = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                2 * page,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        assert_ne!(mem, libc::MAP_FAILED);
+        assert_eq!(
+            unsafe { libc::munmap((mem as usize + page) as *mut _, page) },
+            0
+        );
+
+        let handle = ProcessHandle::try_from(std::process::id() as Pid).unwrap();
+        let end = mem as usize + page;
+        let mut buf = [0u8; 8];
+        assert!(handle.copy_address(end - 8, &mut buf).is_ok());
+        assert!(handle.copy_address(end - 4, &mut buf).is_err());
+        unsafe { libc::munmap(mem, page) };
     }
 
     #[test]
