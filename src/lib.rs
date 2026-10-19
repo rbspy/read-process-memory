@@ -623,7 +623,7 @@ mod test {
         };
         assert_ne!(mem, libc::MAP_FAILED);
         assert_eq!(
-            unsafe { libc::munmap((mem as usize + page) as *mut _, page) },
+            unsafe { libc::mprotect((mem as usize + page) as *mut _, page, libc::PROT_NONE) },
             0
         );
 
@@ -631,8 +631,9 @@ mod test {
         let end = mem as usize + page;
         let mut buf = [0u8; 8];
         assert!(handle.copy_address(end - 8, &mut buf).is_ok());
-        assert!(handle.copy_address(end - 4, &mut buf).is_err());
-        unsafe { libc::munmap(mem, page) };
+        let err = handle.copy_address(end - 4, &mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        unsafe { libc::munmap(mem, 2 * page) };
     }
 
     #[test]
