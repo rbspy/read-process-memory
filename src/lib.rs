@@ -120,7 +120,14 @@ mod platform {
                     _ => Err(io::Error::last_os_error()),
                 }
             } else if result as usize != buf.len() {
-                Err(io::Error::new(io::ErrorKind::UnexpectedEof, "partial read"))
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "Mismatched read sizes for `process_vm_readv` (expected {}, got {})",
+                        buf.len(),
+                        result
+                    ),
+                ))
             } else {
                 Ok(())
             }
@@ -237,7 +244,7 @@ mod platform {
 
             if read_len != buf.len() as vm_size_t {
                 return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                    io::ErrorKind::UnexpectedEof,
                     format!(
                         "Mismatched read sizes for `vm_read` (expected {}, got {})",
                         buf.len(),
@@ -356,7 +363,14 @@ mod platform {
         if result == -1 {
             Err(io::Error::last_os_error())
         } else if ptrace_io_desc.piod_len != buf.len() {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "partial read"))
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "Mismatched read sizes for `PT_IO` (expected {}, got {})",
+                    buf.len(),
+                    ptrace_io_desc.piod_len
+                ),
+            ))
         } else {
             Ok(())
         }
