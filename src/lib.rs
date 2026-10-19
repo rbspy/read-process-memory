@@ -403,15 +403,18 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use std::convert::TryFrom;
+    use std::hash::{Hash, Hasher};
     use std::io;
     use std::mem;
     use std::ops::Deref;
     use std::os::raw::c_void;
-    use std::os::windows::io::RawHandle;
+    use std::os::windows::io::{
+        AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, HandleOrNull, OwnedHandle, RawHandle,
+    };
     use std::process::Child;
     use std::ptr;
     use std::sync::Arc;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ};
 
@@ -419,29 +422,43 @@ mod platform {
 
     /// On Windows a `Pid` is a `DWORD`.
     pub type Pid = u32;
-    #[derive(Eq, PartialEq, Hash)]
-    struct ProcessHandleInner(HANDLE);
 
-    // A HANDLE is an index into the process-wide kernel handle table rather than
-    // an address, so it stays valid on any thread
-    unsafe impl Send for ProcessHandleInner {}
-    unsafe impl Sync for ProcessHandleInner {}
+    /// On Windows a `ProcessHandle` is a shared `OwnedHandle`.
+    #[derive(Clone)]
+    pub struct ProcessHandle(Arc<OwnedHandle>);
 
-    /// On Windows a `ProcessHandle` is a `HANDLE`.
-    #[derive(Clone, Eq, PartialEq, Hash)]
-    pub struct ProcessHandle(Arc<ProcessHandleInner>);
+    impl PartialEq for ProcessHandle {
+        fn eq(&self, other: &Self) -> bool {
+            self.as_raw_handle() == other.as_raw_handle()
+        }
+    }
+
+    impl Eq for ProcessHandle {}
+
+    impl Hash for ProcessHandle {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.as_raw_handle().hash(state);
+        }
+    }
 
     impl Deref for ProcessHandle {
         type Target = HANDLE;
 
         fn deref(&self) -> &Self::Target {
-            &self.0 .0
+            // SAFETY: `OwnedHandle` is `repr(transparent)` over a `RawHandle`, which is a `HANDLE`.
+            unsafe { &*(&*self.0 as *const OwnedHandle).cast::<HANDLE>() }
         }
     }
 
-    impl Drop for ProcessHandleInner {
-        fn drop(&mut self) {
-            unsafe { CloseHandle(self.0) };
+    impl AsHandle for ProcessHandle {
+        fn as_handle(&self) -> BorrowedHandle<'_> {
+            self.0.as_handle()
+        }
+    }
+
+    impl AsRawHandle for ProcessHandle {
+        fn as_raw_handle(&self) -> RawHandle {
+            self.0.as_raw_handle()
         }
     }
 
@@ -450,22 +467,28 @@ mod platform {
         type Error = io::Error;
 
         fn try_from(pid: Pid) -> io::Result<Self> {
-            let handle = unsafe { OpenProcess(PROCESS_VM_READ, 0, pid) };
-            if handle.is_null() {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(Self(Arc::new(ProcessHandleInner(handle))))
-            }
+            let handle =
+                unsafe { HandleOrNull::from_raw_handle(OpenProcess(PROCESS_VM_READ, 0, pid)) };
+            OwnedHandle::try_from(handle)
+                .map(Self::from)
+                .map_err(|_| io::Error::last_os_error())
         }
     }
 
-    /// A `std::process::Child` can be turned into a `ProcessHandle` with
-    /// `OpenProcess`. The `Child` keeps ownership of its own handle.
+    /// A `std::process::Child` can be turned into a `ProcessHandle` by
+    /// duplicating its handle. The `Child` keeps ownership of its own handle.
     impl TryFrom<&Child> for ProcessHandle {
         type Error = io::Error;
 
         fn try_from(child: &Child) -> io::Result<Self> {
-            Self::try_from(child.id() as Pid)
+            child.as_handle().try_clone_to_owned().map(Self::from)
+        }
+    }
+
+    /// Wrap an `OwnedHandle` in a `ProcessHandle`.
+    impl From<OwnedHandle> for ProcessHandle {
+        fn from(handle: OwnedHandle) -> Self {
+            Self(Arc::new(handle))
         }
     }
 
@@ -474,10 +497,11 @@ mod platform {
     /// This **takes ownership** of `handle`. The resulting `ProcessHandle`
     /// closes it with `CloseHandle` once the last clone is dropped. Pass an
     /// owned handle (e.g. from `OpenProcess`), not a borrowed one such as
-    /// `Child::as_raw_handle`.
+    /// `Child::as_raw_handle`. Prefer `From<OwnedHandle>`.
     impl From<RawHandle> for ProcessHandle {
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         fn from(handle: RawHandle) -> Self {
-            Self(Arc::new(ProcessHandleInner(handle as HANDLE)))
+            Self::from(unsafe { OwnedHandle::from_raw_handle(handle) })
         }
     }
 
@@ -490,7 +514,7 @@ mod platform {
 
             if unsafe {
                 ReadProcessMemory(
-                    self.0 .0,
+                    self.as_raw_handle(),
                     addr as *const c_void,
                     buf.as_mut_ptr().cast(),
                     mem::size_of_val(buf),
