@@ -636,6 +636,73 @@ mod test {
         unsafe { libc::munmap(mem, 2 * page) };
     }
 
+    #[cfg(target_os = "freebsd")]
+    #[test]
+    fn test_read_fails_on_short_read() {
+        let path = test_process_path().unwrap();
+        let child = Command::new(path)
+            .arg("short-read")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut child_guard = ChildGuard::new(child);
+
+        let line = {
+            let stdout = child_guard.child_mut().stdout.take().unwrap();
+            BufReader::new(stdout).lines().next().unwrap().unwrap()
+        };
+        let boundary = usize::from_str_radix(&line, 16).unwrap();
+        let handle = ProcessHandle::try_from(&*child_guard.child_mut()).unwrap();
+
+        let mut readable = [0u8; 8];
+        assert!(handle
+            .copy_address(boundary - readable.len(), &mut readable)
+            .is_ok());
+        assert_eq!(readable, [0xaa; 8]);
+
+        let mut crossing = [0u8; 8];
+        let err = handle
+            .copy_address(boundary - 4, &mut crossing)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        drop(handle);
+        child_guard.child_mut().stdin.take();
+        child_guard.child_mut().wait().unwrap();
+        child_guard.disarm();
+    }
+
+    #[cfg(target_os = "freebsd")]
+    struct ChildGuard {
+        child: Option<Child>,
+    }
+
+    #[cfg(target_os = "freebsd")]
+    impl ChildGuard {
+        fn new(child: Child) -> Self {
+            Self { child: Some(child) }
+        }
+
+        fn child_mut(&mut self) -> &mut Child {
+            self.child.as_mut().unwrap()
+        }
+
+        fn disarm(&mut self) {
+            self.child.take();
+        }
+    }
+
+    #[cfg(target_os = "freebsd")]
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
     #[test]
     fn test_read_from_child_handle() {
         let mem = read_test_process_with(None, |child| ProcessHandle::try_from(child)).unwrap();
