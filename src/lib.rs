@@ -636,6 +636,29 @@ mod test {
         unsafe { libc::munmap(mem, 2 * page) };
     }
 
+    #[cfg(target_os = "freebsd")]
+    #[test]
+    fn test_read_fails_on_short_read() {
+        let mut child = Command::new(test_process_path().unwrap())
+            .arg("short-read")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let handle = ProcessHandle::try_from(child.id() as Pid).unwrap();
+        let reader = BufReader::new(child.stdout.take().unwrap());
+        let line = reader.lines().next().unwrap().unwrap();
+        let end = usize::from_str_radix(&line[2..], 16).unwrap();
+
+        let mut buf = [0u8; 8];
+        assert!(handle.copy_address(end - 8, &mut buf).is_ok());
+        // Unlike Linux, FreeBSD fails the whole `PT_IO` request with EFAULT
+        // instead of reporting a short transfer.
+        let err = handle.copy_address(end - 4, &mut buf).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EFAULT));
+        child.wait().unwrap();
+    }
+
     #[test]
     fn test_read_from_child_handle() {
         let mem = read_test_process_with(None, |child| ProcessHandle::try_from(child)).unwrap();
