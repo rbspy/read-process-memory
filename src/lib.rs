@@ -150,6 +150,7 @@ mod platform {
     use std::ffi::CStr;
     use std::io;
     use std::process::Child;
+    use std::sync::Arc;
 
     use super::CopyAddress;
 
@@ -162,9 +163,28 @@ mod platform {
 
     /// On macOS a `Pid` is just a `libc::pid_t`.
     pub type Pid = pid_t;
+    struct ProcessHandleInner {
+        port: mach_port_name_t,
+        /// Whether we hold a send right from `task_for_pid` that we must release.
+        owned: bool,
+    }
+
+    impl Drop for ProcessHandleInner {
+        fn drop(&mut self) {
+            if self.owned {
+                unsafe {
+                    mach2::mach_port::mach_port_deallocate(
+                        mach2::traps::mach_task_self(),
+                        self.port,
+                    )
+                };
+            }
+        }
+    }
+
     /// On macOS a `ProcessHandle` is a mach port.
     #[derive(Clone)]
-    pub struct ProcessHandle(mach_port_name_t);
+    pub struct ProcessHandle(Arc<ProcessHandleInner>);
 
     extern "C" {
         fn vm_read_overwrite(
@@ -202,10 +222,11 @@ mod platform {
     }
 
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the
-    /// mach port representing its task.
-    fn task_for_pid(pid: Pid) -> io::Result<mach_port_name_t> {
+    /// mach port representing its task, and whether the caller owns a send
+    /// right to it.
+    fn task_for_pid(pid: Pid) -> io::Result<(mach_port_name_t, bool)> {
         if pid == unsafe { libc::getpid() } as Pid {
-            return Ok(unsafe { mach2::traps::mach_task_self() });
+            return Ok((unsafe { mach2::traps::mach_task_self() }, false));
         }
 
         let mut task: mach_port_name_t = MACH_PORT_NULL;
@@ -218,24 +239,41 @@ mod platform {
             }
         }
 
-        Ok(task)
+        Ok((task, true))
+    }
+
+    impl ProcessHandle {
+        #[cfg(test)]
+        pub(crate) fn task_port(&self) -> mach_port_name_t {
+            self.0.port
+        }
     }
 
     /// A `Pid` can be turned into a `ProcessHandle` with `task_for_pid`.
+    ///
+    /// The task port's send right is released once the last clone of the
+    /// `ProcessHandle` is dropped.
     impl TryFrom<Pid> for ProcessHandle {
         type Error = io::Error;
 
         fn try_from(pid: Pid) -> io::Result<Self> {
-            Ok(Self(task_for_pid(pid)?))
+            let (port, owned) = task_for_pid(pid)?;
+            Ok(Self(Arc::new(ProcessHandleInner { port, owned })))
         }
     }
 
     /// On Darwin, process handle is a mach port name.
+    ///
+    /// This **borrows** `mach_port_name`: the caller keeps ownership of the
+    /// send right and must keep it alive while the `ProcessHandle` is in use.
     impl TryFrom<mach_port_name_t> for ProcessHandle {
         type Error = io::Error;
 
         fn try_from(mach_port_name: mach_port_name_t) -> io::Result<Self> {
-            Ok(Self(mach_port_name))
+            Ok(Self(Arc::new(ProcessHandleInner {
+                port: mach_port_name,
+                owned: false,
+            })))
         }
     }
 
@@ -264,7 +302,7 @@ mod platform {
             let mut read_len = buf.len() as vm_size_t;
             let result = unsafe {
                 vm_read_overwrite(
-                    self.0,
+                    self.0.port,
                     addr as vm_address_t,
                     buf.len() as vm_size_t,
                     buf.as_mut_ptr() as vm_address_t,
@@ -697,6 +735,66 @@ mod test {
         let err = handle.copy_address(end, &mut buf).unwrap_err();
         assert_eq!(err.raw_os_error(), Some(libc::EFAULT));
         unsafe { libc::munmap(mem, 2 * page) };
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_drop_releases_task_port() {
+        use mach2::kern_return::KERN_SUCCESS;
+        use mach2::port::{mach_port_name_t, mach_port_right_t, MACH_PORT_RIGHT_SEND};
+
+        extern "C" {
+            fn mach_port_get_refs(
+                task: mach2::port::mach_port_t,
+                name: mach_port_name_t,
+                right: mach_port_right_t,
+                refs: *mut u32,
+            ) -> mach2::kern_return::kern_return_t;
+        }
+
+        fn send_refs(name: mach_port_name_t) -> u32 {
+            let mut refs = 0;
+            let kr = unsafe {
+                mach_port_get_refs(
+                    mach2::traps::mach_task_self(),
+                    name,
+                    MACH_PORT_RIGHT_SEND,
+                    &mut refs,
+                )
+            };
+            // Once the last right is released the name is gone entirely.
+            if kr == KERN_SUCCESS {
+                refs
+            } else {
+                0
+            }
+        }
+
+        let mut child = Command::new(test_process_path().unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Getting another process's task port requires root.
+        let handle = match ProcessHandle::try_from(child.id() as Pid) {
+            Ok(handle) => handle,
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                drop(child.stdin.take());
+                child.wait().unwrap();
+                return;
+            }
+            Err(e) => panic!("{}", e),
+        };
+        let port = handle.task_port();
+        let before = send_refs(port);
+        assert!(before > 0);
+        let clone = handle.clone();
+        drop(handle);
+        assert_eq!(send_refs(port), before);
+        drop(clone);
+        assert_eq!(send_refs(port), before - 1);
+        drop(child.stdin.take());
+        child.wait().unwrap();
     }
 
     #[cfg(target_os = "macos")]
