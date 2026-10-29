@@ -332,9 +332,14 @@ mod platform {
 #[cfg(target_os = "freebsd")]
 mod platform {
     use libc::{c_int, c_void, pid_t};
-    use libc::{waitpid, EBUSY, PIOD_READ_D, PT_ATTACH, PT_DETACH, PT_IO, WIFSTOPPED};
+    use libc::{
+        waitpid, EBUSY, ESRCH, PIOD_READ_D, PT_ATTACH, PT_DETACH, PT_IO, SIGSTOP, WIFSTOPPED,
+        WSTOPSIG,
+    };
     use std::convert::TryFrom;
     use std::process::Child;
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::sync::{Mutex, MutexGuard, Once};
     use std::{io, ptr};
 
     use super::CopyAddress;
@@ -353,15 +358,36 @@ mod platform {
         piod_len: usize,
     }
 
-    /// If process is already traced, PT_ATTACH call returns
-    /// EBUSY. This structure is needed to avoid double locking the process.
-    /// - `Release` variant means we can safely detach from the process.
-    /// - `NoRelease` variant means that process was already attached, so we
-    ///   shall not attempt to detach from it.
-    #[derive(PartialEq)]
-    enum PtraceLockState {
-        Release,
-        NoRelease,
+    /// An attachment made by `ptrace_attach`. Dropping it detaches from the
+    /// process, so the target is resumed on every exit path.
+    struct PtraceAttachment {
+        pid: Pid,
+        /// A signal that stopped the process before our attach `SIGSTOP` did.
+        /// It is re-delivered on detach instead of being discarded.
+        signal: c_int,
+        /// Whether dropping this guard still needs to detach from the process.
+        needs_detach: bool,
+    }
+
+    impl PtraceAttachment {
+        /// Detach on the normal path and report failures to the caller. `Drop`
+        /// remains as a fallback for early returns and unwinding.
+        fn detach(mut self) -> io::Result<()> {
+            self.needs_detach = false;
+            ptrace_detach(self.pid, self.signal)
+        }
+    }
+
+    impl Drop for PtraceAttachment {
+        fn drop(&mut self) {
+            if !self.needs_detach {
+                return;
+            }
+            // PT_DETACH also discards our `SIGSTOP` if it's still pending.
+            if let Err(err) = ptrace_detach(self.pid, self.signal) {
+                log::warn!("PT_DETACH failed for pid {}: {}", self.pid, err);
+            }
+        }
     }
 
     extern "C" {
@@ -388,32 +414,62 @@ mod platform {
         }
     }
 
+    /// Serializes attach/read/detach across threads. Without it, a second
+    /// thread reading the same process gets EBUSY from the first thread's
+    /// attach, and the first thread can detach while the second is mid-read.
+    fn ptrace_lock() -> MutexGuard<'static, ()> {
+        static INIT: Once = Once::new();
+        static LOCK: AtomicPtr<Mutex<()>> = AtomicPtr::new(ptr::null_mut());
+        INIT.call_once(|| LOCK.store(Box::into_raw(Box::new(Mutex::new(()))), Ordering::Release));
+        let lock = unsafe { &*LOCK.load(Ordering::Acquire) };
+        // The lock guards no data, so a panic while holding it is harmless.
+        lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Attach to a process `pid` and wait for the process to be stopped.
-    fn ptrace_attach(pid: Pid) -> io::Result<PtraceLockState> {
-        let attach_status = unsafe { ptrace(PT_ATTACH, pid, ptr::null_mut(), 0) };
+    ///
+    /// Returns `None` if the process is already traced, in which case it isn't
+    /// ours to detach from.
+    fn ptrace_attach(pid: Pid) -> io::Result<Option<PtraceAttachment>> {
+        if unsafe { ptrace(PT_ATTACH, pid, ptr::null_mut(), 0) } == -1 {
+            let err = io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(EBUSY) => Ok(None),
+                _ => Err(err),
+            };
+        }
+        let mut attachment = PtraceAttachment {
+            pid,
+            signal: 0,
+            needs_detach: true,
+        };
 
-        let last_error = io::Error::last_os_error();
-
-        if let Some(error) = last_error.raw_os_error() {
-            if attach_status == -1 {
-                return match error {
-                    EBUSY => Ok(PtraceLockState::NoRelease),
-                    _ => Err(last_error),
-                };
+        let mut wait_status = 0;
+        while unsafe { waitpid(pid, &mut wait_status, 0) } == -1 {
+            let err = io::Error::last_os_error();
+            if err.kind() != io::ErrorKind::Interrupted {
+                return Err(err);
             }
         }
 
-        let mut wait_status = 0;
+        if !WIFSTOPPED(wait_status) {
+            // The process exited or was killed, so there's nothing to detach.
+            attachment.needs_detach = false;
+            return Err(io::Error::from_raw_os_error(ESRCH));
+        }
+        let signal = WSTOPSIG(wait_status);
+        if signal != SIGSTOP {
+            attachment.signal = signal;
+        }
+        Ok(Some(attachment))
+    }
 
-        let stopped = unsafe {
-            waitpid(pid, &mut wait_status as *mut _, 0);
-            WIFSTOPPED(wait_status)
-        };
-
-        if !stopped {
+    /// Detach from process `pid`, re-delivering `signal` if one was pending.
+    fn ptrace_detach(pid: Pid, signal: c_int) -> io::Result<()> {
+        if unsafe { ptrace(PT_DETACH, pid, ptr::null_mut(), signal) } == -1 {
             Err(io::Error::last_os_error())
         } else {
-            Ok(PtraceLockState::Release)
+            Ok(())
         }
     }
 
@@ -444,24 +500,13 @@ mod platform {
         }
     }
 
-    /// Detach from the process `pid`.
-    fn ptrace_detach(pid: Pid) -> io::Result<()> {
-        let detach_status = unsafe { ptrace(PT_DETACH, pid, ptr::null_mut(), 0) };
-
-        if detach_status == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
-            let should_detach = ptrace_attach(self.0)? == PtraceLockState::Release;
-
+            let _lock = ptrace_lock();
+            let attachment = ptrace_attach(self.0)?;
             let result = ptrace_io(self.0, addr, buf);
-            if should_detach {
-                ptrace_detach(self.0)?
+            if let Some(attachment) = attachment {
+                attachment.detach()?;
             }
             result
         }
@@ -829,6 +874,41 @@ mod test {
         let err = handle.copy_address(end - 4, &mut buf).unwrap_err();
         assert_eq!(err.raw_os_error(), Some(libc::EFAULT));
         child.wait().unwrap();
+    }
+
+    #[test]
+    fn test_concurrent_reads_from_cloned_handles() {
+        let mut child = Command::new(test_process_path().unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let handle = ProcessHandle::try_from(child.id() as Pid).unwrap();
+        let reader = BufReader::new(child.stdout.take().unwrap());
+        let line = reader.lines().next().unwrap().unwrap();
+        let bits = line.split(' ').collect::<Vec<_>>();
+        let addr = usize::from_str_radix(&bits[0][2..], 16).unwrap();
+        let size = bits[1].parse::<usize>().unwrap();
+
+        let threads = (0..8)
+            .map(|_| {
+                let handle = handle.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        let mem = copy_address(addr, size, &handle).unwrap();
+                        assert_eq!(mem, (0..32u8).collect::<Vec<u8>>());
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        // The child must not be left stopped or traced: closing its stdin
+        // should let it exit normally.
+        drop(child.stdin.take());
+        assert!(child.wait().unwrap().success());
     }
 
     #[test]
