@@ -27,6 +27,7 @@
 #[doc = include_str!("../README.md")]
 mod readme {}
 
+use std::alloc::{self, Layout};
 use std::io;
 
 /// A trait that provides a method for reading memory from another process.
@@ -629,7 +630,7 @@ where
 {
     log::debug!("copy_address: addr: {:x}", addr);
 
-    let mut copy = vec![0; length];
+    let mut copy = zeroed_buffer(length)?;
 
     source
         .copy_address(addr, &mut copy)
@@ -638,6 +639,29 @@ where
             e
         })
         .and(Ok(copy))
+}
+
+/// Allocate a zeroed buffer, failing instead of aborting the process when
+/// `length` can't be allocated. Callers often read `length` out of the target
+/// process, so it can't be trusted.
+fn zeroed_buffer(length: usize) -> io::Result<Vec<u8>> {
+    if length == 0 {
+        return Ok(Vec::new());
+    }
+    let too_large = || {
+        io::Error::new(
+            io::ErrorKind::OutOfMemory,
+            format!("can't allocate {} bytes to copy into", length),
+        )
+    };
+    let layout = Layout::array::<u8>(length).map_err(|_| too_large())?;
+    let ptr = unsafe { alloc::alloc_zeroed(layout) };
+    if ptr.is_null() {
+        return Err(too_large());
+    }
+    // SAFETY: `ptr` came from the global allocator with the layout of a
+    // `[u8; length]`, and zeroing initialized all of it.
+    Ok(unsafe { Vec::from_raw_parts(ptr, length, length) })
 }
 
 #[cfg(test)]
@@ -909,6 +933,17 @@ mod test {
         // should let it exit normally.
         drop(child.stdin.take());
         assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn test_huge_length_fails_without_aborting() {
+        let handle = ProcessHandle::try_from(std::process::id() as Pid).unwrap();
+        let data = [0u8; 4];
+        let err = copy_address(data.as_ptr() as usize, usize::MAX, &handle).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
+        assert!(copy_address(data.as_ptr() as usize, 0, &handle)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
