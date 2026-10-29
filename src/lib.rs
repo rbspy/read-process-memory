@@ -941,9 +941,7 @@ mod test {
         let data = [0u8; 4];
         let err = copy_address(data.as_ptr() as usize, usize::MAX, &handle).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
-        assert!(copy_address(data.as_ptr() as usize, 0, &handle)
-            .unwrap()
-            .is_empty());
+        assert!(zeroed_buffer(0).unwrap().is_empty());
     }
 
     #[test]
