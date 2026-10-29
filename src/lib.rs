@@ -503,6 +503,10 @@ mod platform {
 
     impl CopyAddress for ProcessHandle {
         fn copy_address(&self, addr: usize, buf: &mut [u8]) -> io::Result<()> {
+            if buf.is_empty() {
+                return Ok(());
+            }
+
             let _lock = ptrace_lock();
             let attachment = ptrace_attach(self.0)?;
             let result = ptrace_io(self.0, addr, buf);
@@ -898,6 +902,15 @@ mod test {
         let err = handle.copy_address(end - 4, &mut buf).unwrap_err();
         assert_eq!(err.raw_os_error(), Some(libc::EFAULT));
         child.wait().unwrap();
+    }
+
+    #[cfg(target_os = "freebsd")]
+    #[test]
+    fn test_empty_read_does_not_attach() {
+        // A process can't ptrace itself, so this only succeeds if the read
+        // returns before attaching.
+        let handle = ProcessHandle::try_from(std::process::id() as Pid).unwrap();
+        assert!(handle.copy_address(0, &mut []).is_ok());
     }
 
     #[test]
