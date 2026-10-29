@@ -137,12 +137,17 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use libc::{c_int, pid_t};
-    use mach2::kern_return::{kern_return_t, KERN_SUCCESS};
+    use libc::{c_char, c_int, pid_t};
+    use mach2::kern_return::{
+        kern_return_t, KERN_FAILURE, KERN_INVALID_ADDRESS, KERN_INVALID_NAME, KERN_INVALID_TASK,
+        KERN_PROTECTION_FAILURE, KERN_SUCCESS,
+    };
+    use mach2::message::MACH_SEND_INVALID_DEST;
     use mach2::port::{mach_port_name_t, mach_port_t, MACH_PORT_NULL};
     use mach2::vm_types::{mach_vm_address_t, mach_vm_size_t};
 
     use std::convert::TryFrom;
+    use std::ffi::CStr;
     use std::io;
     use std::process::Child;
 
@@ -169,6 +174,31 @@ mod platform {
             data: vm_address_t,
             out_size: *mut vm_size_t,
         ) -> kern_return_t;
+        fn mach_error_string(error_value: kern_return_t) -> *const c_char;
+    }
+
+    /// Mach calls report failure through their `kern_return_t`, not `errno`, so
+    /// build the `io::Error` from the return code. Unreadable addresses map to
+    /// `EFAULT` to match what the other platforms report for the same condition.
+    fn kern_error(call: &str, kr: kern_return_t) -> io::Error {
+        let kind = match kr {
+            KERN_INVALID_ADDRESS | KERN_PROTECTION_FAILURE => {
+                return io::Error::from_raw_os_error(libc::EFAULT)
+            }
+            // `task_for_pid` returns KERN_FAILURE when the caller lacks the
+            // privileges or entitlements to get the task port.
+            KERN_FAILURE => io::ErrorKind::PermissionDenied,
+            // The task port is dead because the process has exited.
+            KERN_INVALID_NAME | KERN_INVALID_TASK | MACH_SEND_INVALID_DEST => {
+                io::ErrorKind::NotFound
+            }
+            _ => io::ErrorKind::Other,
+        };
+        let msg = unsafe { CStr::from_ptr(mach_error_string(kr)) };
+        io::Error::new(
+            kind,
+            format!("`{}` failed: {} ({:#x})", call, msg.to_string_lossy(), kr),
+        )
     }
 
     /// A small wrapper around `task_for_pid`, which takes a pid and returns the
@@ -184,7 +214,7 @@ mod platform {
             let result =
                 mach2::traps::task_for_pid(mach2::traps::mach_task_self(), pid as c_int, &mut task);
             if result != KERN_SUCCESS {
-                return Err(io::Error::last_os_error());
+                return Err(kern_error("task_for_pid", result));
             }
         }
 
@@ -242,6 +272,10 @@ mod platform {
                 )
             };
 
+            if result != KERN_SUCCESS {
+                return Err(kern_error("vm_read_overwrite", result));
+            }
+
             if read_len != buf.len() as vm_size_t {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -251,10 +285,6 @@ mod platform {
                         read_len
                     ),
                 ));
-            }
-
-            if result != KERN_SUCCESS {
-                return Err(io::Error::last_os_error());
             }
             Ok(())
         }
@@ -634,6 +664,50 @@ mod test {
         let err = handle.copy_address(end - 4, &mut buf).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
         unsafe { libc::munmap(mem, 2 * page) };
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_read_fails_on_short_read() {
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let mem = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                2 * page,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        assert_ne!(mem, libc::MAP_FAILED);
+        assert_eq!(
+            unsafe { libc::mprotect((mem as usize + page) as *mut _, page, libc::PROT_NONE) },
+            0
+        );
+
+        let handle = ProcessHandle::try_from(std::process::id() as Pid).unwrap();
+        let end = mem as usize + page;
+        let mut buf = [0u8; 8];
+        assert!(handle.copy_address(end - 8, &mut buf).is_ok());
+        // Like FreeBSD, `vm_read_overwrite` fails the whole request rather than
+        // reporting a short transfer.
+        let err = handle.copy_address(end - 4, &mut buf).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EFAULT));
+        let err = handle.copy_address(end, &mut buf).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EFAULT));
+        unsafe { libc::munmap(mem, 2 * page) };
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_task_for_pid_error_is_not_errno() {
+        // Without root, `task_for_pid` on another process fails. As root it may
+        // succeed, in which case there is nothing to check.
+        if let Err(err) = ProcessHandle::try_from(1 as Pid) {
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(err.raw_os_error(), None);
+        }
     }
 
     #[cfg(target_os = "freebsd")]
