@@ -7,7 +7,7 @@ license = "MIT"
 description = "Read memory from another process."
 homepage = "https://github.com/rbspy/read-process-memory"
 repository = "https://github.com/rbspy/read-process-memory"
-rust-version = "1.56"
+rust-version = "1.85"
 
 [dependencies]
 libc = "0.2"
